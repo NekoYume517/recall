@@ -1,0 +1,5 @@
+import {
+  "moonbit-hack/recall/src" @lib,
+}
+
+pkgtype(kind: "executable")
