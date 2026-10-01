@@ -271,6 +271,77 @@ test "simulate: 复习上限过低必然积压" {
   assert_true(res.max_backlog >= res.final_backlog)
 }
 
+// ---------------------------------------------------------------------------
+// 积压必须自我强化（回归测试）
+//
+// 曾经的 bug：`policy_retrievability` 用 `interval_days`（**计划**间隔）
+// 当作"已过天数"，而 `grade_fn` 拿不到 `now`，于是无论逾期多久都算"刚到点"。
+// 后果：积压不恶化记忆，积压数被系统性低估。
+// 修法：在 simulate 里把传给 grade_fn 的状态副本的 interval_days
+// 换成真实 elapsed（now - last_review）。
+// ---------------------------------------------------------------------------
+
+///|
+test "simulate: 积压会降低记住率（逾期必须被策略看见）" {
+  // 每天 20 张新卡，但只给 30 次复习配额 → 从第 2 天起就开始积压
+  let res = simulate(
+    AnyScheduler::by_name("fsrs"),
+    cfg_of(60, 20, 30, "realistic"),
+  )
+  let mut early_r = 0
+  let mut early_t = 0
+  let mut late_r = 0
+  let mut late_t = 0
+  for d in res.days {
+    if d.day < 20 {
+      early_r = early_r + d.retained
+      early_t = early_t + d.reviewed
+    } else if d.day >= 40 {
+      late_r = late_r + d.retained
+      late_t = late_t + d.reviewed
+    }
+  }
+  assert_true(early_t > 0)
+  assert_true(late_t > 0)
+  let early = early_r.to_double() / early_t.to_double()
+  let late = late_r.to_double() / late_t.to_double()
+  // 长期积压后记住率必须下降（若策略看不见逾期，两者会几乎相等）
+  assert_true(late < early)
+  // 积压确实在增长
+  assert_true(res.final_backlog > 500)
+}
+
+///|
+test "simulate: 同等配额下悲观策略积压更严重（自我强化）" {
+  // 同一套参数，pessimistic 更容易忘 → 间隔回退 → 更需要复习 → 积压更多
+  let real = simulate(
+    AnyScheduler::by_name("fsrs"),
+    cfg_of(60, 15, 40, "realistic"),
+  )
+  let pes = simulate(
+    AnyScheduler::by_name("fsrs"),
+    cfg_of(60, 15, 40, "pessimistic"),
+  )
+  assert_true(pes.final_backlog > real.final_backlog)
+}
+
+///|
+test "simulate: 无积压时记住率不受影响（修复不能反向伤害）" {
+  // 配额充足 → 从不逾期 → 策略看到的 elapsed 就等于计划间隔，
+  // 行为应与修复前一致：记住率维持在合理水平而不是被错误压低。
+  let res = simulate(
+    AnyScheduler::by_name("fsrs"),
+    cfg_of(60, 10, 0, "realistic"),
+  )
+  assert_eq(res.final_backlog, 0)
+  let mut retained = 0
+  for d in res.days {
+    retained = retained + d.retained
+  }
+  let rate = retained.to_double() / res.total_reviews.to_double()
+  assert_true(rate > 0.8)
+}
+
 ///|
 test "simulate: 复习不限 + optimistic 不产生积压" {
   let res = simulate(
