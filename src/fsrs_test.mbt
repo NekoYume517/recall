@@ -274,6 +274,144 @@ test "fsrs: 难度在反复 Again 下不越界" {
   }
 }
 
+// ---------------------------------------------------------------------------
+// linear damping（回归测试：曾经漏掉 (10-D)/9 导致难度顶死在 10）
+// ---------------------------------------------------------------------------
+
+///|
+test "fsrs: linear damping —— 增量随当前难度递减" {
+  let w = fsrs_default_w()
+  // 同一个评分，从低 D 出发的增量必须大于从高 D 出发的增量
+  let from_low = next_difficulty(w, 1.0, 1) - 1.0
+  let from_mid = next_difficulty(w, 5.0, 1) - 5.0
+  let from_high = next_difficulty(w, 9.9, 1) - 9.9
+  assert_true(from_low > from_mid)
+  assert_true(from_mid > from_high)
+  // D=1 时阻尼系数 = (10-1)/9 = 1.0，即全量推进
+  // raw_delta = -w[6]*(1-3) = 2*w[6] = 2.9208，再加上回归
+  assert_true(from_low > 2.9)
+  // D=9.9 时阻尼系数 ≈ 0.0111，增量应接近 0
+  assert_true(from_high < 0.05)
+}
+
+///|
+test "fsrs: linear damping —— D=8 连续 Again 是平滑收敛，不是一次顶死" {
+  let w = fsrs_default_w()
+  // 回归 lead 裁决里的实测曲线：8.62 → 9.04 → 9.33 → 9.52 → 9.64
+  let mut d = 8.0
+  let seq : Array[Double] = []
+  let mut i = 0
+  while i < 5 {
+    d = next_difficulty(w, d, 1)
+    seq.push(d)
+    i = i + 1
+  }
+  // 第一步绝不能直接到 10（无阻尼版会）
+  assert_true(seq[0] < 9.0)
+  // 严格单调递增
+  assert_true(seq[0] < seq[1])
+  assert_true(seq[1] < seq[2])
+  assert_true(seq[2] < seq[3])
+  assert_true(seq[3] < seq[4])
+  // 且始终保持分辨率（不到 10）
+  assert_true(seq[4] < 10.0)
+  // 增量逐次缩小（这是阻尼的核心效果）
+  let g0 = seq[0] - 8.0
+  let g1 = seq[1] - seq[0]
+  let g2 = seq[2] - seq[1]
+  assert_true(g0 > g1)
+  assert_true(g1 > g2)
+}
+
+///|
+test "fsrs: linear damping —— D 的解析值逐项核对（g=1）" {
+  let w = fsrs_default_w()
+  // D=5, g=1:
+  //   raw = -w[6]*(1-3) = 2.9208
+  //   damping = (10-5)/9 = 5/9 = 0.5556
+  //   delta = 1.6227
+  //   D' = 6.6227，再叠加 w[7]=0.0046 的回归
+  let got = next_difficulty(w, 5.0, 1)
+  assert_true(got > 6.6)
+  assert_true(got < 6.65)
+}
+
+///|
+test "fsrs: linear damping —— Easy 方向同样被阻尼" {
+  let w = fsrs_default_w()
+  // g=4 时 raw = -w[6]*(4-3) = -1.4604
+  // 从 D=5 出发，delta = -1.4604*(10-5)/9 = -0.8113
+  // 从 D=9.9 出发，delta = -1.4604*(0.1)/9 ≈ -0.0162
+  let from_mid = 5.0 - next_difficulty(w, 5.0, 4)
+  let from_high = 9.9 - next_difficulty(w, 9.9, 4)
+  assert_true(from_mid > from_high)
+  assert_true(from_mid > 0.7)
+  assert_true(from_high < 0.05)
+}
+
+// ---------------------------------------------------------------------------
+// 更新顺序：先 D 后 S（回归测试）
+// ---------------------------------------------------------------------------
+
+///|
+test "fsrs: 成功路径使用新 D 而非旧 D（顺序不变量）" {
+  // 手工按「新 D」算一遍，必须与 step() 完全一致。
+  // 若实现退回「旧 D」，这里的数值会对不上。
+  let w = fsrs_default_w()
+  let old_d = 5.0
+  let s = 10.0
+  let elapsed = 3.0
+  let r = forgetting_curve(elapsed, s)
+  let d_new = next_difficulty(w, old_d, 3)
+  let s_expect = stability_after_success(w, d_new, s, r, 3)
+  let s_old_d = stability_after_success(w, old_d, s, r, 3)
+  let (s_got, d_got, _iv) = step(w, 0.9, old_d, s, elapsed, 3, false)
+  // 必须匹配「新 D」版本
+  assert_true(near(s_got, s_expect))
+  assert_true(near(d_got, d_new))
+  // 且必须**不**等于「旧 D」版本（否则说明没改）
+  assert_true(!near(s_got, s_old_d))
+  // 新 D > 旧 D 时（这里 D 从 5 略降），新 D 版本增益更大
+  assert_true(s_got > s_old_d)
+}
+
+///|
+test "fsrs: 遗忘路径也使用新 D" {
+  let w = fsrs_default_w()
+  let old_d = 5.0
+  let s = 20.0
+  let elapsed = 10.0
+  let r = forgetting_curve(elapsed, s)
+  let d_new = next_difficulty(w, old_d, 1)
+  let s_expect = stability_after_lapse(w, d_new, s, r)
+  let s_old_d = stability_after_lapse(w, old_d, s, r)
+  let (s_got, _d, _iv) = step(w, 0.9, old_d, s, elapsed, 1, false)
+  assert_true(near(s_got, s_expect))
+  assert_true(!near(s_got, s_old_d))
+}
+
+///|
+test "fsrs: Good ×5 的间隔序列（含新 D 与阻尼）" {
+  // 回归：3 → 11 → 35 → 101 → 270
+  // 若退回旧 D，第 5 次会是 269 而不是 270
+  let f = Fsrs::new()
+  let mut st = f.init("c1", 0L)
+  let mut now : Timestamp = 0L
+  let ivs : Array[Double] = []
+  let mut i = 0
+  while i < 5 {
+    st = f.review(st, Grade::Good, now)
+    ivs.push(st.interval_days)
+    now = st.due
+    i = i + 1
+  }
+  assert_true(near(ivs[0], 3.0))
+  assert_true(near(ivs[1], 11.0))
+  assert_true(near(ivs[2], 35.0))
+  assert_true(near(ivs[3], 101.0))
+  assert_true(near(ivs[4], 270.0))
+}
+
 ///|
 test "fsrs: 难度在反复 Easy 下不越界" {
   let w = fsrs_default_w()
