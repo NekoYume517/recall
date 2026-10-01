@@ -138,22 +138,39 @@ fn clamp_difficulty(d : Double) -> Double {
 ///|
 /// 难度更新：
 ///
-///   delta_D = -w[6] · (g - 3)          // w[6]：难度增量系数（默认 1.4604）
+///   delta_D = -w[6] · (g - 3) · (10 - D) / 9
 ///   D'      = D + delta_D
-///   D''     = w[7] · D_0(4) + (1 - w[7]) · D'   // w[7]：均值回归强度（默认 0.0046）
+///   D''     = w[7] · D_0(4) + (1 - w[7]) · D'
 ///   截断到 [1, 10]
 ///
-/// 直觉：
-/// - g=3(Good) → delta_D = 0，只做均值回归（几乎不动）
-/// - g=1(Again) → delta_D = +2·w[6]，难度上升
-/// - g=4(Easy)  → delta_D = -w[6]，难度下降
-/// - 均值回归把难度慢慢拉向 D_0(Easy)，防止难度无限漂移
+/// 逐项含义：
+/// - `w[6]`（默认 1.4604）：难度增量系数，控制单次评分能推动多少
+/// - `(g - 3)`：相对 Good 的偏离；Good 为 0，Again 为 +2，Easy 为 -1
+/// - `(10 - D) / 9`：**linear damping（线性阻尼），不能省**。
+///   它把增量按"离 10 还有多远"等比缩小：
+///   D=1 时系数 = 1.0（全量推进），D=5 时 = 5/9（约 56%），D=9.9 时 ≈ 0.011
+///   —— 越接近上限越难推动，形成平滑收敛而不是硬顶死。
+///
+/// **为什么必须有阻尼**（省掉会出真 bug）：
+///   无阻尼时 delta_D 与当前 D 完全无关。从 D=8 连续 Again 5 次：
+///     无阻尼：10.00 → 10.00 → 10.00 → 10.00 → 10.00（第一次就顶死，再也降不下来）
+///     有阻尼： 8.62 →  9.04 →  9.33 →  9.52 →  9.64（平滑逼近 10）
+///   难度一旦顶死就失去分辨率，而 `(11 - D)` 项会随 D 接近 10 而趋近 1，
+///   结果是**系统性高估难卡的间隔增长** —— 难卡被误判成"已经记牢"。
+///
+/// - `w[7]`（默认 0.0046）：均值回归强度。
+///   目标必须是 **D_0(4)**（即"把这张卡当成 Easy 时该有的初始难度"），
+///   不是 w[4]。官方 py-fsrs 参考实现用 D_0(4)；
+///   两者差约 3.97，单步影响只有 0.018，但方向性错误会长期累积。
 pub fn next_difficulty(w : Array[Double], d : Double, rating : Int32) -> Double {
   let g = rating.to_double()
-  // w[6]：每次评分相对"Good"的偏离量
-  let delta_d = -w[6] * (g - 3.0)
+  // w[6]：难度增量系数
+  let raw_delta = -w[6] * (g - 3.0)
+  // linear damping：离上限越远，推进越多；已在上限则推进为 0
+  let damping = (10.0 - d) / 9.0
+  let delta_d = raw_delta * damping
   let d_prime = d + delta_d
-  // w[7]：回归到 D_0(Easy) 的强度
+  // w[7]：向 D_0(4) 回归的强度
   let d0_easy = initial_difficulty(w, 4)
   let reverted = w[7] * d0_easy + (1.0 - w[7]) * d_prime
   clamp_difficulty(reverted)
@@ -290,6 +307,11 @@ pub fn interval_days(s : Double, desired_retention : Double) -> Double {
 ///
 /// `elapsed_days` 由调用方按 `state.last_review` 与 `now` 算出。
 /// `is_first` 为真时走初始公式（不查遗忘曲线）。
+///
+/// ⚠️ **顺序很关键**：官方 FSRS 是「先更新 D，再用**新 D** 算 S」。
+/// 用旧 D 会系统性低估稳定性增长（Good×5 时第 5 次开始差 1 天）。
+/// 但请注意：R 仍然用**旧 S** 与 elapsed 计算——R 描述的是"这一刻的状态"，
+/// 不能被接下来要算的新 S 污染。
 pub fn step(
   w : Array[Double],
   desired_retention : Double,
@@ -304,15 +326,15 @@ pub fn step(
     let d0 = initial_difficulty(w, rating)
     return (s0, d0, interval_days(s0, desired_retention))
   }
-  // 当前可提取性
+  // 1. 当前可提取性：用旧 S 与 elapsed（此刻的真实状态）
   let r = forgetting_curve(elapsed_days, s)
-  // 难度先更新（FSRS-5 里 D 的更新不依赖 R）
+  // 2. 先更新难度（D 的更新本身不依赖 R）
   let d_next = next_difficulty(w, d, rating)
-  // 稳定性按评分分支
+  // 3. 再用**新难度**算稳定性（官方顺序）
   let s_next = if rating == 1 {
-    stability_after_lapse(w, d, s, r)
+    stability_after_lapse(w, d_next, s, r)
   } else {
-    stability_after_success(w, d, s, r, rating)
+    stability_after_success(w, d_next, s, r, rating)
   }
   (s_next, d_next, interval_days(s_next, desired_retention))
 }
