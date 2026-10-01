@@ -330,7 +330,33 @@ pub fn[T : Scheduler] simulate_with(s : T, config : SimConfig) -> SimResult {
     while j < limit {
       let idx = due_idx[j]
       let before = states[idx]
-      let g = (config.grade_fn)(before)
+      // ⚠️ 关键修正：喂给 grade_fn 的不是原始状态，而是把 `interval_days`
+      // 换成「真实已过天数」（now - last_review）之后的副本。
+      //
+      // 为什么必须这么做：`grade_fn` 拿不到 `now`，只能从 CardState 推时间。
+      // 而 `interval_days` 是**调度器给出的计划间隔**，并非真实流逝的时间。
+      // 当卡片被积压拖到逾期 30 天，真实 elapsed 远大于 interval_days，
+      // 真实 R 早已跌破 0.9 —— 不做这层替换，策略就会误以为「刚到点、
+      // 记得很牢」，于是**积压永远不会恶化记忆**，模拟出的积压偏乐观。
+      //
+      // 替换之后积压会自我强化：越拖越忘 → 更多 Again → 间隔回退 →
+      // 更需要复习。这才是「积压拖垮学习节奏」的真实机制。
+      //
+      // 注意：只污染传给评分器的副本；`s.review` 仍收到原始 `before`
+      // （调度器自己会按 last_review 与 now 算 elapsed，不需要外力帮忙）。
+      let elapsed_real = days_between(before.last_review, now)
+      let for_grading = {
+        card_id: before.card_id,
+        stability: before.stability,
+        difficulty: before.difficulty,
+        reps: before.reps,
+        lapses: before.lapses,
+        last_review: before.last_review,
+        due: before.due,
+        interval_days: elapsed_real,
+        phase: before.phase,
+      }
+      let g = (config.grade_fn)(for_grading)
       // 记忆的判定标准：只有 Again 算遗忘（与 SM-2 的 q<3 一致）
       if g != Again {
         retained = retained + 1
