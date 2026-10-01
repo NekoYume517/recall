@@ -1,5 +1,17 @@
 import {
   "moonbit-hack/recall/src" @lib,
+  "moonbitlang/x/sys",
+  "moonbitlang/x/fs",
+  "moonbitlang/core/env",
+  "moonbitlang/core/math",
 }
 
 pkgtype(kind: "executable")
+
+// CLI 的输出必须可读：`moon run` 会把编译期警告打到 stdout，
+// 上百条 deprecation 提示（derive(Eq/Debug) 生成的 implicit_impl_as_method、
+// String::substring 的 deprecated 等）会把实际报表完全淹没。
+//
+// 只关掉这三类纯噪音警告；真正的类型错误、模式匹配遗漏等仍会报出。
+
+warnings = "-implicit_impl_as_method-deprecated-unused_value"
