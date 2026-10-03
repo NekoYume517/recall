@@ -102,7 +102,7 @@ test "FSRS 的 interval_days 与 due 一致封顶（已修复）" {
 
 ///|
 test "SM-2 与 Leitner 的正常间隔完全不受上限影响" {
-  // 上限是 36500 天，两个经典算法都到不了
+  // 上限是 36500 天，两个经典算法在 10 次内都到不了
   let sm2 = Sm2::new()
   let mut s = sm2.init("c1", 0L)
   for i in 0..<10 {
@@ -116,4 +116,98 @@ test "SM-2 与 Leitner 的正常间隔完全不受上限影响" {
     l = leit.review(l, Grade::Easy, 0L)
   }
   assert_true(l.interval_days < max_interval_days())
+}
+
+// ─────────────────────────────────────────────────────────────────
+// SM-2 间隔封顶回归测试
+//
+// 背景：SM-2 的间隔是纯几何增长（EF 恒定时 interval(n) = interval(n-1)*EF）。
+// 连续答对 30 次后膨胀到 3.2e12 天（约 88 亿年），
+// 让 compare/stats 里所有读 interval_days 的统计完全失真。
+// 只有在 EF 恒定的路径（如连续 Good，EF 保持 2.5）上才暴露。
+// ─────────────────────────────────────────────────────────────────
+
+///|
+test "SM-2 连续 Good 30 次：间隔封顶在 100 年，不几何爆炸" {
+  let sched = Sm2::new()
+  let mut st = sched.init("c1", 0L)
+  let mut now : Timestamp = 0L
+  for i in 0..<30 {
+    st = sched.review(st, Grade::Good, now)
+    now = st.due
+    // 每一轮都必须受上限约束
+    assert_true(st.interval_days <= max_interval_days())
+    assert_true(st.interval_days >= 1.0)
+  }
+  // 30 次后应当正好停在上限
+  assert_true(approx(st.interval_days, max_interval_days(), 0.000000001))
+  // 修复前的值是 3.2e12；确认现在远小于它
+  assert_true(st.interval_days < 1000000.0)
+}
+
+///|
+test "SM-2 连续 Easy 也封顶（EF 会涨，但仍不能爆炸）" {
+  let sched = Sm2::new()
+  let mut st = sched.init("c1", 0L)
+  let mut now : Timestamp = 0L
+  for i in 0..<40 {
+    st = sched.review(st, Grade::Easy, now)
+    now = st.due
+    assert_true(st.interval_days <= max_interval_days())
+  }
+  assert_true(approx(st.interval_days, max_interval_days(), 0.000000001))
+}
+
+///|
+test "SM-2 封顶后 due 与 interval_days 仍然一致" {
+  let sched = Sm2::new()
+  let mut st = sched.init("c1", 0L)
+  let mut now : Timestamp = 1700000000L
+  for i in 0..<35 {
+    st = sched.review(st, Grade::Good, now)
+    now = st.due
+  }
+  // due = last_review + interval_days * 86400
+  let expected = add_days(st.last_review, st.interval_days)
+  inspect(st.due.to_string(), content=expected.to_string())
+}
+
+///|
+test "SM-2 封顶后 retrievability 仍可用（不发散）" {
+  let sched = Sm2::new()
+  let mut st = sched.init("c1", 0L)
+  for i in 0..<35 {
+    st = sched.review(st, Grade::Good, 0L)
+  }
+  // 即使是 100 年间隔，R 也必须在 [0,1]
+  let r = sched.retrievability(st, st.last_review + 86400L)
+  assert_true(r >= 0.0)
+  assert_true(r <= 1.0)
+}
+
+///|
+test "sm2_next_interval 本身带上下界（源头防护）" {
+  // 直接调底层函数验证：不论传入多离谱的 prev_interval 都不会溢出
+  let huge = sm2_next_interval(1.0e18, 2.5, 20, Grade::Good)
+  assert_true(huge <= max_interval_days())
+
+  let zero = sm2_next_interval(0.0, 2.5, 20, Grade::Good)
+  assert_true(zero >= 1.0)
+
+  let nan_prev = sm2_next_interval(0.0 / 0.0, 2.5, 20, Grade::Good)
+  assert_true(nan_prev >= 1.0)
+  assert_true(nan_prev <= max_interval_days())
+}
+
+///|
+test "SM-2 答错时立刻回到 1 天（不受上限影响）" {
+  let sched = Sm2::new()
+  let mut st = sched.init("c1", 0L)
+  for i in 0..<35 {
+    st = sched.review(st, Grade::Good, 0L)
+  }
+  // 封顶在 100 年后答错
+  let lapsed = sched.review(st, Grade::Again, 0L)
+  assert_true(approx(lapsed.interval_days, 1.0, 0.000000001))
+  assert_true(approx(lapsed.difficulty, 2.18, 0.000000001))
 }

@@ -98,22 +98,42 @@ pub fn sm2_next_ease(ease : Double, grade : Grade) -> Double {
 /// - 第 1 次成功 → 1.0
 /// - 第 2 次成功 → 6.0
 /// - 之后 → `round(prev_interval * ease)`，ease 用**更新前**的 EF
+///
+/// ⚠️ 结果被夹到 `[1.0, max_interval_days()]`。
+///
+/// 为什么必须夹：SM-2 的间隔是**纯几何增长**（EF 恒定时
+/// `interval(n) = interval(n-1) * EF`）。连续答对 30 次后，
+/// `interval` 会膨胀到 `3.2e12` 天（约 88 亿年）——这是垃圾值，
+/// 会让 `compare` / `stats` 里所有读 `interval_days` 的统计完全失真。
+/// 只有在 EF 恒定（Good/Learn 的 EF=2.5）的路径上才暴露，
+/// 所以早期测试都没发现。
+///
+/// 夹在源头（这个函数）而不是调用方，保证任何调用方都拿到安全值。
 pub fn sm2_next_interval(
   prev_interval : Double,
   ease : Double,
   repetitions : Int32,
   grade : Grade,
 ) -> Double {
-  if !sm2_is_correct(grade) {
-    return 1.0
-  }
-  let n = repetitions + 1
-  if n == 1 {
+  let raw = if !sm2_is_correct(grade) {
     1.0
-  } else if n == 2 {
-    6.0
   } else {
-    @math.round(prev_interval * ease)
+    let n = repetitions + 1
+    if n == 1 {
+      1.0
+    } else if n == 2 {
+      6.0
+    } else {
+      @math.round(prev_interval * ease)
+    }
+  }
+  // 下限 1 天（间隔不能是 0 或负数），上限 100 年（防几何爆炸）
+  if raw.is_nan() || raw < 1.0 {
+    1.0
+  } else if raw > max_interval_days() {
+    max_interval_days()
+  } else {
+    raw
   }
 }
 
@@ -196,12 +216,17 @@ pub impl Scheduler for Sm2 with fn review(self, state, grade, now) {
 ///
 /// 因此 R(t=S) = 0.9，与 FSRS 的校准点一致，两条曲线可以直接叠图比较。
 /// 但它是**约定**而非推导：SM-2 的 EF 并不满足真实遗忘曲线。
+///
+/// `S` 会夹到 `max_interval_days()`：`review` 已经把间隔封顶，但如果
+/// state 来自外部构造（或修复前产生的旧状态）仍可能带着 `3.2e12` 这类
+/// 垃圾值，夹一下保证同一份日志在任何入口都给出相同的 R。
 pub impl Scheduler for Sm2 with fn retrievability(self, state, now) {
   let t = days_between(state.last_review, now)
   if t <= 0.0 {
     return 1.0
   }
-  let s = if state.interval_days > 0.0 { state.interval_days } else { 1.0 }
+  let raw_s = if state.interval_days > 0.0 { state.interval_days } else { 1.0 }
+  let s = if raw_s > max_interval_days() { max_interval_days() } else { raw_s }
   clamp_retrievability(@math.pow(0.9, t / s))
 }
 
