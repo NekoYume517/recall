@@ -559,21 +559,30 @@ fn cmd_compare(args : Args) -> Int32 {
   println("")
   println(
     pad_right("指标", 22) +
+    " " +
     pad_left(c.a_name, 14) +
+    " " +
     pad_left(c.b_name, 14) +
+    " " +
     pad_left("差值", 14),
   )
-  println(hr(64))
+  println(hr(68))
   println(
     pad_right("最终间隔总和(天)", 22) +
+    " " +
     pad_left(fmt_float(c.a_total_interval, 1), 14) +
+    " " +
     pad_left(fmt_float(c.b_total_interval, 1), 14) +
+    " " +
     pad_left(fmt_float(c.b_total_interval - c.a_total_interval, 1), 14),
   )
   println(
     pad_right("遗忘次数", 22) +
+    " " +
     pad_left(c.a_lapses.to_string(), 14) +
+    " " +
     pad_left(c.b_lapses.to_string(), 14) +
+    " " +
     pad_left((c.b_lapses - c.a_lapses).to_string(), 14),
   )
   let n = c.per_card.length()
@@ -581,24 +590,33 @@ fn cmd_compare(args : Args) -> Int32 {
   let b_avg = if n == 0 { 0.0 } else { c.b_total_interval / n.to_double() }
   println(
     pad_right("平均间隔(天)", 22) +
+    " " +
     pad_left(fmt_float(a_avg, 1), 14) +
+    " " +
     pad_left(fmt_float(b_avg, 1), 14) +
+    " " +
     pad_left(fmt_float(b_avg - a_avg, 1), 14),
   )
   println("")
   println("逐卡对比")
   println(
     pad_right("卡片", 14) +
+    " " +
     pad_left(c.a_name, 14) +
+    " " +
     pad_left(c.b_name, 14) +
+    " " +
     pad_left("差值", 14),
   )
-  println(hr(56))
+  println(hr(60))
   for row in c.per_card {
     println(
       pad_right(row.0, 14) +
+      " " +
       pad_left(fmt_float(row.1, 1), 14) +
+      " " +
       pad_left(fmt_float(row.2, 1), 14) +
+      " " +
       pad_left(fmt_float(row.2 - row.1, 1), 14),
     )
   }
