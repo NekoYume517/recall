@@ -19,7 +19,7 @@ pub(all) enum Grade {
 
 ///|
 /// 评分 → 展示用整数（Again=0 / Hard=2 / Good=3 / Easy=5）。
-pub fn Grade::to_int(self : Grade) -> Int {
+pub fn Grade::to_int(self : Grade) -> Int32 {
   match self {
     Again => 0
     Hard => 2
@@ -31,7 +31,7 @@ pub fn Grade::to_int(self : Grade) -> Int {
 ///|
 /// 整数 → 评分。超出 0..5 的输入夹到两端：
 /// `0→Again, 1|2→Hard, 3→Good, 4|5→Easy`，负数按 0、>5 按 5 处理。
-pub fn Grade::from_int(n : Int) -> Grade {
+pub fn Grade::from_int(n : Int32) -> Grade {
   if n <= 0 {
     Again
   } else if n <= 2 {
@@ -110,9 +110,34 @@ pub fn days_between(from : Timestamp, to : Timestamp) -> Double {
 }
 
 ///|
+/// 单个间隔的上限（天）：100 年。
+///
+/// 为什么需要它：FSRS 的 S 在连续 Easy 下会指数增长（实测第 50 次左右
+/// S ≈ 2e15 天），而 `due = now + interval*86400` 一旦超过 Int64 上限
+/// （约 1.07e14 天）就会**回绕成负数**，卡片会变成"永久到期"，
+/// 重放和统计随之全错。
+///
+/// 36500 天（100 年）远大于任何真实复习场景，也远小于溢出边界，
+/// 因此既不会截断有意义的行为，又彻底消除回绕。
+pub fn max_interval_days() -> Double {
+  36500.0
+}
+
+///|
 /// 从时间戳往后推 `days` 天，四舍五入到整秒。
+///
+/// `days` 先夹到 `[0, max_interval_days()]`，杜绝 Int64 回绕
+/// （见 `max_interval_days()` 的说明）。负数按 0 处理：到期时间
+/// 不应早于"现在"，否则卡片会立刻反复到期。
 pub fn add_days(now : Timestamp, days : Double) -> Timestamp {
-  now + @math.round(days * seconds_per_day()).to_int64()
+  let d = if days.is_nan() || days < 0.0 {
+    0.0
+  } else if days > max_interval_days() {
+    max_interval_days()
+  } else {
+    days
+  }
+  now + @math.round(d * seconds_per_day()).to_int64()
 }
 
 ///|
@@ -131,8 +156,8 @@ pub(all) struct CardState {
   card_id : String
   stability : Double // S：保持天数
   difficulty : Double // D：1..10
-  reps : Int // 成功复习次数
-  lapses : Int // 遗忘次数
+  reps : Int32 // 成功复习次数
+  lapses : Int32 // 遗忘次数
   last_review : Timestamp
   due : Timestamp
   interval_days : Double
