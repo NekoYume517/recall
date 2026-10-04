@@ -597,6 +597,31 @@ fn cmd_compare(args : Args) -> Int32 {
     " " +
     pad_left(fmt_float(b_avg - a_avg, 1), 14),
   )
+  // 「触及间隔上限」的卡数：这是判断指标是否可比的**前提**。
+  // interval_days 一旦顶到 max_interval_days()（100 年），说明该算法认为
+  // 这张卡 100 年后才需要复习 —— 在真实场景里等价于「永远不再复习」。
+  // 这类卡会把 total_interval 拉到失真的量级，导致「间隔总和越大越好」的
+  // 直觉彻底失效（SM-2 就常常这样失控，而 FSRS 不会）。
+  let cap = @lib.max_interval_days()
+  let mut a_at_cap = 0
+  let mut b_at_cap = 0
+  for row in c.per_card {
+    if row.1 >= cap {
+      a_at_cap = a_at_cap + 1
+    }
+    if row.2 >= cap {
+      b_at_cap = b_at_cap + 1
+    }
+  }
+  println(
+    pad_right("触及上限(100年)卡数", 22) +
+    " " +
+    pad_left(a_at_cap.to_string(), 14) +
+    " " +
+    pad_left(b_at_cap.to_string(), 14) +
+    " " +
+    pad_left((b_at_cap - a_at_cap).to_string(), 14),
+  )
   println("")
   println("逐卡对比")
   println(
@@ -620,8 +645,12 @@ fn cmd_compare(args : Args) -> Int32 {
       pad_left(fmt_float(row.2 - row.1, 1), 14),
     )
   }
+  let ratio = if c.a_total_interval > 0.0 {
+    c.b_total_interval / c.a_total_interval
+  } else {
+    1.0
+  }
   if n > 0 && c.a_total_interval > 0.0 {
-    let ratio = c.b_total_interval / c.a_total_interval
     println("")
     println(
       "→ " +
@@ -632,6 +661,51 @@ fn cmd_compare(args : Args) -> Int32 {
       fmt_float(ratio, 2) +
       " 倍",
     )
+  }
+  // --- 解读提示：只在"有卡顶到上限"或"比值极端"时才出现 ---
+  // 目的不是评判算法，而是阻止"间隔总和越大 = 算法越好"这个错误推断。
+  let a_capped = a_at_cap > 0
+  let b_capped = b_at_cap > 0
+  if a_capped || b_capped {
+    println("")
+    println("⚠ 指标解读")
+    if a_capped {
+      println(
+        "  " +
+        c.a_name +
+        " 有 " +
+        a_at_cap.to_string() +
+        "/" +
+        n.to_string() +
+        " 张卡触及 100 年上限：该算法认为它们 100 年后才需复习，",
+      )
+      println(
+        "  在真实场景中等价于「永远不再复习」。这些卡把间隔总和拉得很大，",
+      )
+      println(
+        "  因此「间隔总和/平均间隔」在此**不能**直接当作优劣比较。",
+      )
+    }
+    if b_capped {
+      println(
+        "  " +
+        c.b_name +
+        " 有 " +
+        b_at_cap.to_string() +
+        "/" +
+        n.to_string() +
+        " 张卡触及 100 年上限，同样不可直接比较。",
+      )
+    }
+    println(
+      "  更可比的指标是「触及上限卡数」（越少越好）与「遗忘次数」。",
+    )
+  } else if ratio > 10.0 || ratio < 0.1 {
+    println("")
+    println(
+      "⚠ 两侧间隔相差超过 10 倍，总量指标可能被少数极端卡主导，",
+    )
+    println("  建议结合逐卡对比与遗忘次数一起看。")
   }
   0
 }
