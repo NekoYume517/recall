@@ -9,6 +9,7 @@
 // - 浮点不要用 inspect 精确比字符串，先绑变量再用容差。
 // - 共享辅助函数 `approx` 在 test_helpers_test.mbt。
 
+///|
 test "grade to_int 是展示用刻度" {
   inspect(Grade::to_int(Grade::Again), content="0")
   inspect(Grade::to_int(Grade::Hard), content="2")
@@ -16,6 +17,7 @@ test "grade to_int 是展示用刻度" {
   inspect(Grade::to_int(Grade::Easy), content="5")
 }
 
+///|
 test "grade from_int 映射 0..5" {
   inspect(Grade::label(Grade::from_int(0)), content="again")
   inspect(Grade::label(Grade::from_int(1)), content="hard")
@@ -25,6 +27,7 @@ test "grade from_int 映射 0..5" {
   inspect(Grade::label(Grade::from_int(5)), content="easy")
 }
 
+///|
 test "grade from_int 越界夹到两端" {
   inspect(Grade::label(Grade::from_int(-100)), content="again")
   inspect(Grade::label(Grade::from_int(-1)), content="again")
@@ -32,6 +35,7 @@ test "grade from_int 越界夹到两端" {
   inspect(Grade::label(Grade::from_int(999)), content="easy")
 }
 
+///|
 test "grade 整数往返（只对 0/2/3/5 恒等）" {
   // Hard 覆盖 1..2、Easy 覆盖 4..5，所以只有这四档往返恒等
   inspect(Grade::to_int(Grade::from_int(0)), content="0")
@@ -40,6 +44,7 @@ test "grade 整数往返（只对 0/2/3/5 恒等）" {
   inspect(Grade::to_int(Grade::from_int(5)), content="5")
 }
 
+///|
 test "is_recalled 是统一判定：只有 Again 算失败" {
   inspect(is_recalled(Grade::Again), content="false")
   // Hard 算成功回忆（q=3，SM-2 也判答对）
@@ -48,6 +53,7 @@ test "is_recalled 是统一判定：只有 Again 算失败" {
   inspect(is_recalled(Grade::Easy), content="true")
 }
 
+///|
 test "is_pass 已修正为 is_recalled 的别名" {
   // 历史上 is_pass 实现成 to_int >= 3（把 Hard 判失败），已修正
   inspect(Grade::is_pass(Grade::Again), content="false")
@@ -60,6 +66,7 @@ test "is_pass 已修正为 is_recalled 的别名" {
   }
 }
 
+///|
 test "grade label 往返" {
   inspect(Grade::label(Grade::Again), content="again")
   inspect(Grade::label(Grade::Hard), content="hard")
@@ -75,12 +82,14 @@ test "grade label 往返" {
   }
 }
 
+///|
 test "grade derive(Eq) 可用" {
   inspect(Grade::Good == Grade::Good, content="true")
   inspect(Grade::Good == Grade::Easy, content="false")
   inspect(Grade::Again == Grade::Hard, content="false")
 }
 
+///|
 test "timestamp 是 Int64 别名" {
   let t : Timestamp = 1700000000L
   inspect(t.to_string(), content="1700000000")
@@ -89,6 +98,7 @@ test "timestamp 是 Int64 别名" {
   inspect(later > t, content="true")
 }
 
+///|
 test "days_between 基本换算" {
   let a : Timestamp = 0L
   let b : Timestamp = 86400L
@@ -98,16 +108,19 @@ test "days_between 基本换算" {
   assert_true(approx(d3, 3.0, 0.000000001))
 }
 
+///|
 test "days_between 可以为负" {
   let d = days_between(86400L, 0L)
   assert_true(approx(d, -1.0, 0.000000001))
 }
 
+///|
 test "seconds_per_day 常量" {
   let s = seconds_per_day()
   assert_true(approx(s, 86400.0, 0.000000001))
 }
 
+///|
 test "add_days 四舍五入到整秒" {
   let now : Timestamp = 1700000000L
   inspect(add_days(now, 1.0).to_string(), content="1700086400")
@@ -117,6 +130,7 @@ test "add_days 四舍五入到整秒" {
   inspect(third.to_string(), content="1700028800")
 }
 
+///|
 test "card state new 是白板" {
   let st = CardState::new("c1", 1700000000L)
   inspect(st.card_id, content="c1")
@@ -130,22 +144,25 @@ test "card state new 是白板" {
   inspect(Phase::label(st.phase), content="新卡")
 }
 
+///|
 test "card state is_new" {
   let st = CardState::new("c1", 100L)
   inspect(st.is_new(), content="true")
-  let reviewed = { ..st, reps: 1 }
+  let reviewed = { ..st, reps: 1, }
   inspect(reviewed.is_new(), content="false")
 }
 
+///|
 test "card state is_due 边界" {
-  let st = { ..CardState::new("c1", 0L), due: 1000L }
+  let st = { ..CardState::new("c1", 0L), due: 1000L, }
   inspect(st.is_due(1000L), content="true")
   inspect(st.is_due(1001L), content="true")
   inspect(st.is_due(999L), content="false")
 }
 
+///|
 test "card state overdue_days" {
-  let st = { ..CardState::new("c1", 0L), due: 0L }
+  let st = { ..CardState::new("c1", 0L), due: 0L, }
   let early = st.overdue_days(-86400L)
   assert_true(approx(early, 0.0, 0.000000001))
   let on_time = st.overdue_days(0L)
@@ -154,18 +171,20 @@ test "card state overdue_days" {
   assert_true(approx(late, 2.0, 0.000000001))
 }
 
+///|
 test "card state equal 逐字段" {
   let a = CardState::new("c1", 100L)
   let b = CardState::new("c1", 100L)
   inspect(CardState::equal(a, b), content="true")
-  let c = { ..a, reps: 1 }
+  let c = { ..a, reps: 1, }
   inspect(CardState::equal(a, c), content="false")
-  let d = { ..a, card_id: "c2" }
+  let d = { ..a, card_id: "c2", }
   inspect(CardState::equal(a, d), content="false")
-  let e = { ..a, phase: Phase::Review }
+  let e = { ..a, phase: Phase::Review, }
   inspect(CardState::equal(a, e), content="false")
 }
 
+///|
 test "phase label" {
   inspect(Phase::label(Phase::New), content="新卡")
   inspect(Phase::label(Phase::Learning), content="学习中")
@@ -173,6 +192,7 @@ test "phase label" {
   inspect(Phase::label(Phase::Relearning), content="重学")
 }
 
+///|
 test "phase derive(Eq)" {
   inspect(Phase::New == Phase::New, content="true")
   inspect(Phase::New == Phase::Review, content="false")

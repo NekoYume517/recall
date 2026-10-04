@@ -21,7 +21,7 @@
 pub(all) struct Sm2 {
   ease_factor : Double // 默认 2.5，下限 1.3
   interval_days : Double
-  repetitions : Int
+  repetitions : Int32
 } derive(Debug)
 
 ///|
@@ -39,18 +39,14 @@ pub fn sm2_default_ease() -> Double {
 ///|
 /// 默认 SM-2：EF=2.5，无间隔，无复习次数。
 pub fn Sm2::new() -> Sm2 {
-  { ease_factor: 2.5, interval_days: 0.0, repetitions: 0 }
+  { ease_factor: 2.5, interval_days: 0.0, repetitions: 0, }
 }
 
 ///|
 /// 指定 EF 初值的 SM-2（低于 1.3 会被夹到 1.3）。
 pub fn Sm2::with_ease(ease : Double) -> Sm2 {
-  let ef = if ease < sm2_min_ease() {
-    sm2_min_ease()
-  } else {
-    ease
-  }
-  { ease_factor: ef, interval_days: 0.0, repetitions: 0 }
+  let ef = if ease < sm2_min_ease() { sm2_min_ease() } else { ease }
+  { ease_factor: ef, interval_days: 0.0, repetitions: 0, }
 }
 
 ///|
@@ -59,7 +55,7 @@ pub fn Sm2::with_ease(ease : Double) -> Sm2 {
 /// **这是唯一权威映射，不要在别处再造一个**：
 /// Again→2, Hard→3, Good→4, Easy→5。
 /// （注意与 `Grade::to_int` 的 0/2/3/5 完全不同。）
-pub fn sm2_quality(grade : Grade) -> Int {
+pub fn sm2_quality(grade : Grade) -> Int32 {
   match grade {
     Again => 2
     Hard => 3
@@ -78,7 +74,7 @@ pub fn sm2_is_correct(grade : Grade) -> Bool {
 /// 单次 EF 增量：`0.1 - (5-q) * (0.08 + (5-q) * 0.02)`。
 ///
 /// 典型值：q=5 → +0.10，q=4 → 0.00，q=3 → -0.14，q=2 → -0.32。
-pub fn sm2_ease_delta(q : Int) -> Double {
+pub fn sm2_ease_delta(q : Int32) -> Double {
   let diff = (5 - q).to_double()
   0.1 - diff * (0.08 + diff * 0.02)
 }
@@ -105,7 +101,7 @@ pub fn sm2_next_ease(ease : Double, grade : Grade) -> Double {
 pub fn sm2_next_interval(
   prev_interval : Double,
   ease : Double,
-  repetitions : Int,
+  repetitions : Int32,
   grade : Grade,
 ) -> Double {
   if !sm2_is_correct(grade) {
@@ -123,13 +119,13 @@ pub fn sm2_next_interval(
 
 ///|
 /// 名字。
-pub impl Scheduler for Sm2 with name(self) {
+pub impl Scheduler for Sm2 with fn name(self) {
   "sm2"
 }
 
 ///|
 /// 新卡：EF 初值写进 `difficulty`，其余归零、`due = now`。
-pub impl Scheduler for Sm2 with init(self, card_id, now) {
+pub impl Scheduler for Sm2 with fn init(self, card_id, now) {
   {
     card_id,
     stability: 0.0,
@@ -151,7 +147,7 @@ pub impl Scheduler for Sm2 with init(self, card_id, now) {
 /// - `reps`           ↔ repetitions（成功复习次数）
 /// - `interval_days`  ↔ 当前间隔
 /// - `stability`      ↔ 间隔的镜像（给 stats/曲线画图用，不参与决策）
-pub impl Scheduler for Sm2 with review(self, state, grade, now) {
+pub impl Scheduler for Sm2 with fn review(self, state, grade, now) {
   let prev_ease = if state.difficulty < sm2_min_ease() {
     self.ease_factor
   } else {
@@ -168,16 +164,8 @@ pub impl Scheduler for Sm2 with review(self, state, grade, now) {
   // 2) 再更新 EF（每次复习都做，答错也做）
   let ease = sm2_next_ease(prev_ease, grade)
   // 3) 计数与阶段
-  let reps = if correct {
-    state.reps + 1
-  } else {
-    0
-  }
-  let lapses = if correct {
-    state.lapses
-  } else {
-    state.lapses + 1
-  }
+  let reps = if correct { state.reps + 1 } else { 0 }
+  let lapses = if correct { state.lapses } else { state.lapses + 1 }
   let phase = if !correct {
     Relearning
   } else if reps >= 3 {
@@ -208,21 +196,17 @@ pub impl Scheduler for Sm2 with review(self, state, grade, now) {
 ///
 /// 因此 R(t=S) = 0.9，与 FSRS 的校准点一致，两条曲线可以直接叠图比较。
 /// 但它是**约定**而非推导：SM-2 的 EF 并不满足真实遗忘曲线。
-pub impl Scheduler for Sm2 with retrievability(self, state, now) {
+pub impl Scheduler for Sm2 with fn retrievability(self, state, now) {
   let t = days_between(state.last_review, now)
   if t <= 0.0 {
     return 1.0
   }
-  let s = if state.interval_days > 0.0 {
-    state.interval_days
-  } else {
-    1.0
-  }
+  let s = if state.interval_days > 0.0 { state.interval_days } else { 1.0 }
   clamp_retrievability(@math.pow(0.9, t / s))
 }
 
 ///|
 /// 目标保持率。SM-2 没有这个概念，固定返回 0.9（即 retrievability 的校准点）。
-pub impl Scheduler for Sm2 with desired_retention(self) {
+pub impl Scheduler for Sm2 with fn desired_retention(self) {
   0.9
 }

@@ -228,7 +228,155 @@ test "raises" {
 
 `inspect(x, content="...")` 比对 `Show` 输出，注意 `1.0` 会显示成 `1`。
 
-## 8. 常见坑汇总
+## 8. 数学库（实测）
+
+```moonbit
+@math.pow(a, b)
+@math.exp(x)
+@math.ln(x)        // ⚠️ 是 ln，不是 log
+@math.log2(x) / @math.log10(x)
+@math.floor / ceil / round
+```
+
+## 9. 进程退出码（CLI 必须）
+
+```moonbit
+// moonbitlang/x/sys
+@sys.exit(0)    // 成功
+@sys.exit(1)    // 数据错误
+@sys.exit(2)    // 用法错误
+```
+`fn main` 只能返回 Unit，退出码靠 `@sys.exit`。
+
+## 10. 浮点测试的三个坑（**必读，会浪费你很多时间**）
+
+### 坑 A：不支持科学计数法字面量
+
+```moonbit
+assert_true(x < 1e-9)          // ❌ Parse error
+assert_true(x < 0.000000001)   // ✅
+```
+
+### 坑 B：`inspect` 对 Double 是精确字符串比对
+
+```moonbit
+inspect(ef[0], content="2.6")   // ❌ 实际是 "2.6" 但 2.7 会变成 "2.7000000000000003"
+inspect(x, content="2.8000000000000003")  // ❌ 又脆又丑
+```
+
+**正确做法：用容差断言，不要用 `inspect` 比浮点。**
+
+```moonbit
+let d = ef[0] - 2.6
+assert_true(d.abs() < 0.000000001)
+```
+
+### 坑 C：表达式里直接比较可能解析失败
+
+```moonbit
+// ❌ 有时解析器不接受
+assert_true((ef[0] - 2.6).abs() < 0.000000001)
+// ✅ 先绑定到变量
+let d = ef[0] - 2.6
+assert_true(d.abs() < 0.000000001)
+```
+
+### 坑 D：位运算优先级
+
+```moonbit
+if (mask >> i) & 1 == 0 { }        // ❌ Expr Type Mismatch
+if ((mask >> i) & 1) == 0 { }      // ✅ 位运算必须自己加括号
+```
+
+### 坑 E：枚举比较需要 Eq
+
+```moonbit
+pub(all) enum R { Ok; Val(Int) } derive(Debug)      // ❌ expected == op.result 报错
+pub(all) enum R { Ok; Val(Int) } derive(Eq, Debug)  // ✅
+```
+
+## 11. 更多实测坑（由多位开发者汇总）
+
+```moonbit
+// derive(Debug) 不含 Show，inspect 打印不了枚举/结构体
+inspect(my_enum, content="...")     // ❌ 需要 Show
+// ✅ 先转 String 或用 == 比 Bool
+inspect(my_enum.label(), content="x")
+inspect(a == b, content="true")
+
+// 包内顶层函数只能定义一次（哪怕在不同测试文件）
+// test_helpers_test.mbt 里放共享的 approx()，其他测试文件直接调用
+
+// trait 方法要显式限定，否则 deprecation
+s.name()                    // ⚠️ implicit promotion
+Scheduler::name(s)          // ✅
+
+// @math 没有 abs
+x.abs()                     // ✅ Double::abs()
+
+// 没有 ? 后缀（try 运算符）
+let x = f()?                // ❌
+let x = f()                 // ✅ 直接 raise 穿透
+
+// 没有 String * n
+String::make(30, ' ')       // ✅ 重复字符
+
+// 不支持 for &x in arr
+for x in arr.iter()         // ✅
+
+// 记录字段默认不可变，mut 加在字段上也没用
+cli.json = true                     // ❌ The record field json is immutable
+let cli2 = { ..cli, json: true }    // ✅ 用结构体更新语法
+// 例外：struct R { mut state : Int } 可以改 self.state
+
+// 多行 && 在 if 里不能直接换行
+if a
+   && b { }                 // ❌ Unexpected line break
+let ok = a && b             // ✅
+if ok { }
+
+// 结构体不支持 trait 约束
+struct Ctx[M : Model] { }   // ❌ Parse error
+// 泛型只加在函数上：fn[M : Model] dfs(model : M, ...)
+
+// 枚举变体只能用位置参数
+suberror E { V(line : Int) }  // ❌
+suberror E { V(Int) }         // ✅
+
+// 结构体和同名枚举变体冲突时
+Violation({ ... })          // ❌ 被解析成 CheckOutcome 的变体
+Violation::{ ... }          // ✅
+
+// guard 是保留字
+fn f(guard : Expl)          // ❌ Parse error
+
+// 空 import {} + options() 要小心 mnemonic 拼写
+// warn_list 里写错 mnemonic 是**硬失败**，不是警告
+// 合法示例: "-implicit_impl_as_method-unused_package-deprecated"
+```
+
+## 12. PowerShell 辅助脚本的坑
+
+```powershell
+# -eq 对数组是「过滤」不是「比较」
+if ($a -eq $b) { }          # ❌ 永远为真/假得莫名其妙
+if (($a | Out-String) -ceq ($b | Out-String)) { }   # ✅
+
+# curl 的 -s 后面不能跟空参数
+```
+
+## 13. 最终检查清单（提交前）
+
+```powershell
+$env:MOON_HOME="E:\moonbit\home"; $env:Path="E:\moonbit\home\bin;"+$env:Path
+moon check          # 0 error
+moon test           # 全绿
+moon fmt            # 格式化
+moon info           # 生成 .mbti 接口文件
+moon build --target wasm
+```
+
+## 14. 常见坑汇总
 
 | 现象 | 原因 / 解法 |
 |---|---|
@@ -241,3 +389,7 @@ test "raises" {
 | `Function with error is not allowed in fn main` | 写成 `fn main raise` |
 | `{}` 歧义警告 | 用 `Map([])` / `Json::empty_object()` |
 | `derive(Show)` 弃用 | 用 `derive(Debug)`；数组用 `\{...}` 插值需元素实现 `Show` |
+| `is a trait, not a type` | MoonBit 无 trait object，用泛型约束或枚举包装 |
+| `1e-9` Parse error | 不支持科学计数法，写 `0.000000001` |
+| `Int` 溢出成负数 | 32 位有符号，LCG 乘法后要 `& 0x7FFFFFFF` |
+| 位运算比较报类型错 | 加括号：`((a >> b) & 1) == 0` |

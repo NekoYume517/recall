@@ -8,7 +8,7 @@ repository = "https://github.com/moonbit-hack/recall"
 
 license = "Apache-2.0"
 
-keywords = ["spaced-repetition", "scheduler", "fsrs", "sm2", "learning"]
+keywords = [ "spaced-repetition", "scheduler", "fsrs", "sm2", "learning" ]
 
 preferred_target = "wasm"
 

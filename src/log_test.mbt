@@ -66,9 +66,7 @@ fn example_jsonl() -> String {
 /// 会立刻失败并暴露问题。
 fn parse_example() -> ReviewLog {
   let text = example_jsonl()
-  let parsed = try {
-    ReviewLog::from_jsonl(text)
-  } catch {
+  let parsed = ReviewLog::from_jsonl(text) catch {
     _ => return ReviewLog::new()
   }
   match parsed {
@@ -81,12 +79,14 @@ fn parse_example() -> ReviewLog {
 // 构造与基本操作
 // ─────────────────────────────────────────────────────────────────
 
+///|
 test "new 是空日志" {
   let log = ReviewLog::new()
   inspect(log.length(), content="0")
   inspect(log.is_empty(), content="true")
 }
 
+///|
 test "push 保持插入顺序" {
   let log = ReviewLog::new()
   log.push(ev("a", 100L, Grade::Good, 0.0))
@@ -98,24 +98,28 @@ test "push 保持插入顺序" {
   inspect(log.events[2].reviewed_at.to_string(), content="300")
 }
 
+///|
 test "ReviewEvent::new 把负 elapsed 夹到 0" {
   let e = ReviewEvent::new("c1", 100L, 90L, Grade::Good, -5.0)
   let d = e.elapsed_days
   assert_true(approx(d, 0.0, 0.000000001))
 }
 
+///|
 test "overdue_days 提前复习返回 0" {
   let e = ReviewEvent::new("c1", 900L, 1000L, Grade::Good, 1.0)
   let d = e.overdue_days()
   assert_true(approx(d, 0.0, 0.000000001))
 }
 
+///|
 test "overdue_days 逾期计算" {
   let e = ReviewEvent::new("c1", 172800L, 0L, Grade::Good, 2.0)
   let d = e.overdue_days()
   assert_true(approx(d, 2.0, 0.000000001))
 }
 
+///|
 test "event equal 逐字段" {
   let a = ev("c1", 100L, Grade::Good, 1.0)
   let b = ev("c1", 100L, Grade::Good, 1.0)
@@ -128,6 +132,7 @@ test "event equal 逐字段" {
 // JSONL 单行格式
 // ─────────────────────────────────────────────────────────────────
 
+///|
 test "to_jsonl 单行字段名与顺序固定" {
   let log = ReviewLog::new()
   log.push(ReviewEvent::new("c1", 1700000000L, 1699999000L, Grade::Good, 1.0))
@@ -137,6 +142,7 @@ test "to_jsonl 单行字段名与顺序固定" {
   )
 }
 
+///|
 test "to_jsonl integer elapsed 输出为 1 而不是 1.0" {
   let log = ReviewLog::new()
   log.push(ReviewEvent::new("c1", 100L, 0L, Grade::Good, 21.0))
@@ -145,16 +151,19 @@ test "to_jsonl integer elapsed 输出为 1 而不是 1.0" {
   inspect(out.contains("21.0"), content="false")
 }
 
+///|
 test "to_jsonl 小数 elapsed 保留小数" {
   let log = ReviewLog::new()
   log.push(ReviewEvent::new("c1", 100L, 0L, Grade::Good, 1.5))
   inspect(log.to_jsonl().contains("\"elapsed_days\":1.5"), content="true")
 }
 
+///|
 test "空日志 to_jsonl 是空串" {
   inspect(ReviewLog::new().to_jsonl(), content="")
 }
 
+///|
 test "card_id 含特殊字符时转义正确（不手拼 JSON 的理由）" {
   let log = ReviewLog::new()
   let weird = "a\"b\\c\td"
@@ -173,6 +182,7 @@ test "card_id 含特殊字符时转义正确（不手拼 JSON 的理由）" {
 // JSONL 往返
 // ─────────────────────────────────────────────────────────────────
 
+///|
 test "JSONL 往返一致（多种评分与小数）" {
   let log = ReviewLog::new()
   log.push(ev("c1", 1700000000L, Grade::Again, 0.0))
@@ -189,6 +199,7 @@ test "JSONL 往返一致（多种评分与小数）" {
   }
 }
 
+///|
 test "往返后能再次序列化成相同字节（幂等）" {
   let log = ReviewLog::new()
   log.push(ev("c1", 1700000000L, Grade::Good, 1.0))
@@ -200,6 +211,7 @@ test "往返后能再次序列化成相同字节（幂等）" {
   }
 }
 
+///|
 test "from_jsonl 跳过空行但行号仍然准确" {
   let text = "\n{\"card_id\":\"c1\",\"reviewed_at\":100,\"due_at\":0,\"grade\":3,\"elapsed_days\":1}\n\n{\"card_id\":\"c2\",\"reviewed_at\":200,\"due_at\":0,\"grade\":3,\"elapsed_days\":1}\n"
   match ReviewLog::from_jsonl(text) {
@@ -212,6 +224,7 @@ test "from_jsonl 跳过空行但行号仍然准确" {
   }
 }
 
+///|
 test "from_jsonl 容忍行尾空白与 CRLF" {
   let text = "{\"card_id\":\"c1\",\"reviewed_at\":100,\"due_at\":0,\"grade\":3,\"elapsed_days\":1}  \r\n"
   match ReviewLog::from_jsonl(text) {
@@ -220,6 +233,7 @@ test "from_jsonl 容忍行尾空白与 CRLF" {
   }
 }
 
+///|
 test "空文本读出空日志" {
   match ReviewLog::from_jsonl("") {
     Ok(log) => inspect(log.length(), content="0")
@@ -231,6 +245,7 @@ test "空文本读出空日志" {
 // 错误处理（行号必须准确）
 // ─────────────────────────────────────────────────────────────────
 
+///|
 test "坏 JSON 报第 2 行" {
   let text = "{\"card_id\":\"c1\",\"reviewed_at\":100,\"due_at\":0,\"grade\":3,\"elapsed_days\":1}\n{bad}\n"
   match ReviewLog::from_jsonl(text) {
@@ -240,6 +255,7 @@ test "坏 JSON 报第 2 行" {
   }
 }
 
+///|
 test "缺字段报 BadLine 且带行号" {
   let text = "{\"card_id\":\"c1\",\"reviewed_at\":100,\"due_at\":0}\n"
   match ReviewLog::from_jsonl(text) {
@@ -249,6 +265,7 @@ test "缺字段报 BadLine 且带行号" {
   }
 }
 
+///|
 test "时间戳类型错误报 BadTimestamp" {
   let text = "{\"card_id\":\"c1\",\"reviewed_at\":\"not-a-number\",\"due_at\":0,\"grade\":3,\"elapsed_days\":1}\n"
   match ReviewLog::from_jsonl(text) {
@@ -258,6 +275,7 @@ test "时间戳类型错误报 BadTimestamp" {
   }
 }
 
+///|
 test "顶层不是对象报 BadLine" {
   match ReviewLog::from_jsonl("[1,2,3]\n") {
     Ok(_) => inspect("should fail", content="failed")
@@ -266,6 +284,7 @@ test "顶层不是对象报 BadLine" {
   }
 }
 
+///|
 test "坏行不做部分成功（前面合法行也一起丢弃）" {
   let text = "{\"card_id\":\"c1\",\"reviewed_at\":100,\"due_at\":0,\"grade\":3,\"elapsed_days\":1}\nXXX\n"
   match ReviewLog::from_jsonl(text) {
@@ -278,6 +297,7 @@ test "坏行不做部分成功（前面合法行也一起丢弃）" {
 // 分组与排序
 // ─────────────────────────────────────────────────────────────────
 
+///|
 test "by_card 分组正确" {
   let log = ReviewLog::new()
   log.push(ev("a", 100L, Grade::Good, 0.0))
@@ -297,6 +317,7 @@ test "by_card 分组正确" {
   }
 }
 
+///|
 test "by_card 每组按 reviewed_at 升序" {
   let log = ReviewLog::new()
   log.push(ev("a", 300L, Grade::Good, 2.0))
@@ -312,6 +333,7 @@ test "by_card 每组按 reviewed_at 升序" {
   }
 }
 
+///|
 test "by_card 同一秒的事件保持文件原顺序（稳定排序）" {
   let log = ReviewLog::new()
   log.push(ev("a", 100L, Grade::Again, 5.0))
@@ -327,6 +349,7 @@ test "by_card 同一秒的事件保持文件原顺序（稳定排序）" {
   }
 }
 
+///|
 test "by_card 不改变原日志顺序" {
   let log = ReviewLog::new()
   log.push(ev("b", 300L, Grade::Good, 0.0))
@@ -336,6 +359,7 @@ test "by_card 不改变原日志顺序" {
   inspect(log.events[1].card_id, content="a")
 }
 
+///|
 test "card_ids 去重且保持首次出现顺序" {
   let log = ReviewLog::new()
   log.push(ev("b", 100L, Grade::Good, 0.0))
@@ -351,6 +375,7 @@ test "card_ids 去重且保持首次出现顺序" {
 // 30 条真实事件（内联 fixture，与 examples/reviews.jsonl 一致）
 // ─────────────────────────────────────────────────────────────────
 
+///|
 test "30 条事件能读入，6 张卡各 5 次" {
   let log = parse_example()
   inspect(log.length(), content="30")
@@ -364,6 +389,7 @@ test "30 条事件能读入，6 张卡各 5 次" {
   }
 }
 
+///|
 test "首条事件内容正确" {
   let log = parse_example()
   let first = log.events[0]
@@ -375,6 +401,7 @@ test "首条事件内容正确" {
   assert_true(approx(e0, 0.0, 0.000000001))
 }
 
+///|
 test "每张卡的间隔序列是 0,1,3,8,21" {
   let groups = parse_example().by_card()
   match groups.get("c1") {
@@ -389,6 +416,7 @@ test "每张卡的间隔序列是 0,1,3,8,21" {
   }
 }
 
+///|
 test "每张卡的评分序列是 Good,Easy,Easy,Good,Easy" {
   let groups = parse_example().by_card()
   match groups.get("e1") {
@@ -403,6 +431,7 @@ test "每张卡的评分序列是 Good,Easy,Easy,Good,Easy" {
   }
 }
 
+///|
 test "30 条事件往返后语义完全一致" {
   let log = parse_example()
   match ReviewLog::from_jsonl(log.to_jsonl()) {
@@ -414,6 +443,7 @@ test "30 条事件往返后语义完全一致" {
   }
 }
 
+///|
 test "30 条事件往返字节稳定" {
   let log = parse_example()
   let out = log.to_jsonl()
@@ -423,6 +453,7 @@ test "30 条事件往返字节稳定" {
   }
 }
 
+///|
 test "grade 4/5 归一化为 Easy=5（契约固有的有损点）" {
   // API.md 的 Grade 只有 4 档，但 JSON 里 grade 是 0..5 的整数：
   //   from_int: 0→Again, 1|2→Hard, 3→Good, 4|5→Easy
@@ -435,6 +466,7 @@ test "grade 4/5 归一化为 Easy=5（契约固有的有损点）" {
   inspect(g4 == g5, content="true")
 }
 
+///|
 test "往返只做一次归一化，之后字节稳定（幂等）" {
   let log = parse_example()
   let once = log.to_jsonl()
@@ -453,6 +485,7 @@ test "往返只做一次归一化，之后字节稳定（幂等）" {
   }
 }
 
+///|
 test "归一化只影响 grade 字段，其余字段逐字节不变" {
   // fixture 里 grade 只有 3 和 4 两种；3→Good→3 不变，4→Easy→5 变化。
   // 其余（card_id / 时间戳 / elapsed）必须原样保留。

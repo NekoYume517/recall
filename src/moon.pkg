@@ -1,5 +1,10 @@
 import {
-  "moonbitlang/core/json" @json,
+  "moonbitlang/core/json",
+  "moonbitlang/core/math",
 }
 
+// 测试自包含（30 条 fixture 内联在 log_test.mbt），不读文件，
+// 因此不需要 moonbitlang/x/fs。
 pkgtype(kind: "library")
+
+warnings = "-implicit_impl_as_method-unused_package-test_unqualified_package-deprecated"
