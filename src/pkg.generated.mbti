@@ -1,0 +1,272 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "moonbit-hack/recall/src"
+
+import {
+  "moonbitlang/core/debug",
+}
+
+// Values
+pub fn add_days(Int64, Double) -> Int64
+
+pub fn[T : Scheduler] apply_review(T, CardState, Grade, Int64) -> CardState
+
+pub fn clamp_retrievability(Double) -> Double
+
+pub fn compare(ReviewLog, AnyScheduler, AnyScheduler) -> Comparison
+
+pub fn compute_stats(ReviewLog) -> Array[CardStats]
+
+pub fn days_between(Int64, Int64) -> Double
+
+pub fn forgetting_curve(Double, Double) -> Double
+
+pub fn fsrs_default_w() -> Array[Double]
+
+pub fn fsrs_rating(Grade) -> Int
+
+pub fn grade_policy(StringView) -> (CardState) -> Grade
+
+pub fn grade_policy_valid(StringView) -> Bool
+
+pub fn grade_policy_with_seed(StringView, Int64) -> (CardState) -> Grade
+
+pub fn initial_difficulty(Array[Double], Int) -> Double
+
+pub fn initial_stability(Array[Double], Int) -> Double
+
+pub fn interval_days(Double, Double) -> Double
+
+pub fn is_recalled(Grade) -> Bool
+
+pub fn lcg_next(Int64) -> Int64
+
+pub fn lcg_unit(Int64) -> Double
+
+pub fn leitner_default_boxes() -> Int
+
+pub fn leitner_default_intervals() -> Array[Double]
+
+pub fn max_interval_days() -> Double
+
+pub fn next_difficulty(Array[Double], Double, Int) -> Double
+
+pub fn optimistic_policy() -> (CardState) -> Grade
+
+pub fn overall_stats(Array[CardStats]) -> OverallStats
+
+pub fn pessimistic_policy(Int64) -> (CardState) -> Grade
+
+pub fn realistic_policy(Int64) -> (CardState) -> Grade
+
+pub fn replay(ReviewLog, AnyScheduler) -> ReplayResult
+
+pub fn[T : Scheduler] replay_with(ReviewLog, T) -> ReplayResult
+
+pub fn retention_curve(ReviewLog, Int) -> Array[(Double, Double)]
+
+pub fn retrievability_with(Array[Double], Double, Double) -> Double
+
+pub fn scheduler_name_valid(String) -> Bool
+
+pub fn scheduler_names() -> Array[String]
+
+pub fn seconds_per_day() -> Double
+
+pub fn simulate(AnyScheduler, SimConfig) -> SimResult
+
+pub fn[T : Scheduler] simulate_with(T, SimConfig) -> SimResult
+
+pub fn sm2_default_ease() -> Double
+
+pub fn sm2_ease_delta(Int) -> Double
+
+pub fn sm2_is_correct(Grade) -> Bool
+
+pub fn sm2_min_ease() -> Double
+
+pub fn sm2_next_ease(Double, Grade) -> Double
+
+pub fn sm2_next_interval(Double, Double, Int, Grade) -> Double
+
+pub fn sm2_quality(Grade) -> Int
+
+pub fn stability_after_lapse(Array[Double], Double, Double, Double) -> Double
+
+pub fn stability_after_success(Array[Double], Double, Double, Double, Int) -> Double
+
+pub fn step(Array[Double], Double, Double, Double, Double, Int, Bool) -> (Double, Double, Double)
+
+// Errors
+pub(all) suberror LogError {
+  BadLine(Int, String)
+  BadTimestamp(Int, String)
+} derive(@debug.Debug)
+
+// Types and methods
+pub(all) enum AnyScheduler {
+  Sm2(Sm2)
+  Fsrs(Fsrs)
+  Leitner(Leitner)
+} derive(@debug.Debug)
+pub fn AnyScheduler::by_name(String) -> Self
+pub impl Scheduler for AnyScheduler
+
+pub(all) struct CardState {
+  card_id : String
+  stability : Double
+  difficulty : Double
+  reps : Int
+  lapses : Int
+  last_review : Int64
+  due : Int64
+  interval_days : Double
+  phase : Phase
+} derive(@debug.Debug)
+pub fn CardState::equal(Self, Self) -> Bool
+pub fn CardState::is_due(Self, Int64) -> Bool
+pub fn CardState::is_new(Self) -> Bool
+pub fn CardState::new(String, Int64) -> Self
+pub fn CardState::overdue_days(Self, Int64) -> Double
+
+pub(all) struct CardStats {
+  card_id : String
+  reviews : Int
+  lapses : Int
+  mean_interval : Double
+  max_interval : Double
+  retention_rate : Double
+} derive(@debug.Debug)
+
+pub(all) struct Comparison {
+  a_name : String
+  b_name : String
+  a_total_interval : Double
+  b_total_interval : Double
+  a_lapses : Int
+  b_lapses : Int
+  per_card : Array[(String, Double, Double)]
+} derive(@debug.Debug)
+
+pub(all) struct Fsrs {
+  w : Array[Double]
+  desired_retention : Double
+} derive(@debug.Debug)
+pub fn Fsrs::new() -> Self
+pub fn Fsrs::with_params(Array[Double]) -> Self
+pub fn Fsrs::with_retention(Double) -> Self
+pub impl Scheduler for Fsrs
+
+pub(all) enum Grade {
+  Again
+  Hard
+  Good
+  Easy
+} derive(Eq, @debug.Debug)
+pub fn Grade::from_int(Int) -> Self
+pub fn Grade::from_label(StringView) -> Self?
+pub fn Grade::is_pass(Self) -> Bool
+pub fn Grade::label(Self) -> String
+pub fn Grade::to_int(Self) -> Int
+
+pub(all) struct Leitner {
+  boxes : Int
+  intervals : Array[Double]
+} derive(@debug.Debug)
+pub fn Leitner::new() -> Self
+pub fn Leitner::with_boxes(Int) -> Self
+pub impl Scheduler for Leitner
+
+pub(all) struct OverallStats {
+  cards : Int
+  reviews : Int
+  lapses : Int
+  retention_rate : Double
+  mean_interval : Double
+} derive(@debug.Debug)
+
+pub(all) enum Phase {
+  New
+  Learning
+  Review
+  Relearning
+} derive(Eq, @debug.Debug)
+pub fn Phase::label(Self) -> String
+
+pub(all) struct ReplayResult {
+  final_states : Map[String, CardState]
+  snapshots : Array[(Int64, String, CardState)]
+  total_reviews : Int
+  total_lapses : Int
+  interval_error_days : Double
+} derive(@debug.Debug)
+
+pub(all) struct ReviewEvent {
+  card_id : String
+  reviewed_at : Int64
+  due_at : Int64
+  grade : Grade
+  elapsed_days : Double
+} derive(@debug.Debug)
+pub fn ReviewEvent::equal(Self, Self) -> Bool
+pub fn ReviewEvent::new(String, Int64, Int64, Grade, Double) -> Self
+pub fn ReviewEvent::overdue_days(Self) -> Double
+
+pub(all) struct ReviewLog {
+  events : Array[ReviewEvent]
+} derive(@debug.Debug)
+pub fn ReviewLog::by_card(Self) -> Map[String, Array[ReviewEvent]]
+pub fn ReviewLog::card_ids(Self) -> Array[String]
+pub fn ReviewLog::equal(Self, Self) -> Bool
+pub fn ReviewLog::from_jsonl(StringView) -> Result[Self, LogError] raise
+pub fn ReviewLog::is_empty(Self) -> Bool
+pub fn ReviewLog::length(Self) -> Int
+pub fn ReviewLog::new() -> Self
+pub fn ReviewLog::push(Self, ReviewEvent) -> Unit
+pub fn ReviewLog::to_jsonl(Self) -> String
+
+pub(all) struct SimConfig {
+  days : Int
+  new_per_day : Int
+  review_limit : Int
+  desired_retention : Double
+  grade_fn : (CardState) -> Grade
+  seed : Int64
+} derive(@debug.Debug)
+pub fn SimConfig::default() -> Self
+
+pub(all) struct SimDay {
+  day : Int
+  new_cards : Int
+  due_cards : Int
+  reviewed : Int
+  backlog : Int
+  retained : Int
+} derive(@debug.Debug)
+
+pub(all) struct SimResult {
+  days : Array[SimDay]
+  total_reviews : Int
+  max_backlog : Int
+  final_backlog : Int
+} derive(@debug.Debug)
+
+pub(all) struct Sm2 {
+  ease_factor : Double
+  interval_days : Double
+  repetitions : Int
+} derive(@debug.Debug)
+pub fn Sm2::new() -> Self
+pub fn Sm2::with_ease(Double) -> Self
+pub impl Scheduler for Sm2
+
+// Type aliases
+pub type Timestamp = Int64
+
+// Traits
+pub trait Scheduler {
+  fn name(Self) -> String
+  fn init(Self, String, Int64) -> CardState
+  fn review(Self, CardState, Grade, Int64) -> CardState
+  fn retrievability(Self, CardState, Int64) -> Double
+  fn desired_retention(Self) -> Double
+}
