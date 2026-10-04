@@ -40,10 +40,9 @@ fn play(seq : Array[Grade]) -> Array[(Double, Double)] {
 //   第 5 次 round(38  * 2.5) = round(95.0)  = 95
 // ─────────────────────────────────────────────────────────────────
 
+///|
 test "SM-2 表 1: Good x5 间隔与 EF" {
-  let r = play([
-    Grade::Good, Grade::Good, Grade::Good, Grade::Good, Grade::Good,
-  ])
+  let r = play([Grade::Good, Grade::Good, Grade::Good, Grade::Good, Grade::Good])
   inspect(r.length(), content="5")
   // 每次的 interval
   assert_true(approx(r[0].0, 1.0, 0.000000001))
@@ -68,6 +67,7 @@ test "SM-2 表 1: Good x5 间隔与 EF" {
 //   第 3 次：round(6 * 2.7)=round(16.2)=16，EF 2.7→2.8
 // ─────────────────────────────────────────────────────────────────
 
+///|
 test "SM-2 表 2: Easy x3 间隔与 EF" {
   let r = play([Grade::Easy, Grade::Easy, Grade::Easy])
   inspect(r.length(), content="3")
@@ -91,6 +91,7 @@ test "SM-2 表 2: Easy x3 间隔与 EF" {
 //    round(6*2.08)=12，本测试就会失败——这正是要守的那个坑。
 // ─────────────────────────────────────────────────────────────────
 
+///|
 test "SM-2 表 3: Hard x3 间隔与 EF（验证用旧 EF 算间隔）" {
   let r = play([Grade::Hard, Grade::Hard, Grade::Hard])
   inspect(r.length(), content="3")
@@ -113,6 +114,7 @@ test "SM-2 表 3: Hard x3 间隔与 EF（验证用旧 EF 算间隔）" {
 //                 delta 0 → EF 仍 2.18
 // ─────────────────────────────────────────────────────────────────
 
+///|
 test "SM-2 表 4: Good,Good,Again,Good 间隔与 EF" {
   let r = play([Grade::Good, Grade::Good, Grade::Again, Grade::Good])
   inspect(r.length(), content="4")
@@ -127,13 +129,12 @@ test "SM-2 表 4: Good,Good,Again,Good 间隔与 EF" {
   assert_true(approx(r[3].1, 2.18, 0.000000001))
 }
 
+///|
 test "SM-2 四组表总校验（一次性打印手算值）" {
   // 把四组的最终间隔序列拼成字符串，与手算表逐字比对
   let sb = StringBuilder()
   let cases : Array[Array[Grade]] = [
-    [
-      Grade::Good, Grade::Good, Grade::Good, Grade::Good, Grade::Good,
-    ],
+    [Grade::Good, Grade::Good, Grade::Good, Grade::Good, Grade::Good],
     [Grade::Easy, Grade::Easy, Grade::Easy],
     [Grade::Hard, Grade::Hard, Grade::Hard],
     [Grade::Good, Grade::Good, Grade::Again, Grade::Good],
@@ -148,16 +149,14 @@ test "SM-2 四组表总校验（一次性打印手算值）" {
     }
     sb.write_char('\n')
   }
-  inspect(
-    sb.to_string(),
-    content="1,6,15,38,95\n1,6,16\n1,6,13\n1,6,1,1\n",
-  )
+  inspect(sb.to_string(), content="1,6,15,38,95\n1,6,16\n1,6,13\n1,6,1,1\n")
 }
 
 // ─────────────────────────────────────────────────────────────────
 // q 映射与 EF 公式的单元测试
 // ─────────────────────────────────────────────────────────────────
 
+///|
 test "sm2_quality 映射是 2/3/4/5（不是 to_int 的 0/2/3/5）" {
   inspect(sm2_quality(Grade::Again), content="2")
   inspect(sm2_quality(Grade::Hard), content="3")
@@ -168,6 +167,7 @@ test "sm2_quality 映射是 2/3/4/5（不是 to_int 的 0/2/3/5）" {
   inspect(Grade::to_int(Grade::Good), content="3")
 }
 
+///|
 test "答错判定是 q < 3，只有 Again 算错" {
   inspect(sm2_is_correct(Grade::Again), content="false")
   // Hard 算答对：q=3 >= 3，且 is_recalled(Hard) 也为 true（二者一致）
@@ -181,6 +181,7 @@ test "答错判定是 q < 3，只有 Again 算错" {
   }
 }
 
+///|
 test "EF delta 四个值" {
   assert_true(approx(sm2_ease_delta(5), 0.1, 0.000000001))
   assert_true(approx(sm2_ease_delta(4), 0.0, 0.000000001))
@@ -188,6 +189,7 @@ test "EF delta 四个值" {
   assert_true(approx(sm2_ease_delta(2), -0.32, 0.000000001))
 }
 
+///|
 test "sm2_next_ease 单步" {
   assert_true(approx(sm2_next_ease(2.5, Grade::Easy), 2.6, 0.000000001))
   assert_true(approx(sm2_next_ease(2.5, Grade::Good), 2.5, 0.000000001))
@@ -195,6 +197,7 @@ test "sm2_next_ease 单步" {
   assert_true(approx(sm2_next_ease(2.5, Grade::Again), 2.18, 0.000000001))
 }
 
+///|
 test "EF 下限 1.3：连续 Again 不会击穿" {
   let sched = Sm2::new()
   let mut state = sched.init("c1", 0L)
@@ -210,6 +213,7 @@ test "EF 下限 1.3：连续 Again 不会击穿" {
   assert_true(approx(state.difficulty, 1.3, 0.000000001))
 }
 
+///|
 test "EF 下限 1.3：下限之后 Easy 只回升 0.1" {
   let sched = Sm2::new()
   let mut state = sm2_state_at_floor(sched)
@@ -229,6 +233,7 @@ fn sm2_state_at_floor(sched : Sm2) -> CardState {
   state
 }
 
+///|
 test "间隔随 reps 单调不减（Good 序列）" {
   let sched = Sm2::new()
   let mut state = sched.init("c1", 0L)
@@ -243,6 +248,7 @@ test "间隔随 reps 单调不减（Good 序列）" {
   }
 }
 
+///|
 test "同一状态 Good 的间隔 >= Hard 的间隔" {
   let sched = Sm2::new()
   let base = {
@@ -260,6 +266,7 @@ test "同一状态 Good 的间隔 >= Hard 的间隔" {
 // 状态推进的非表格部分
 // ─────────────────────────────────────────────────────────────────
 
+///|
 test "init 是新卡" {
   let sched = Sm2::new()
   let st = sched.init("c1", 1000L)
@@ -274,6 +281,7 @@ test "init 是新卡" {
   inspect(Phase::label(st.phase), content="新卡")
 }
 
+///|
 test "review 不修改入参（纯函数）" {
   let sched = Sm2::new()
   let st = sched.init("c1", 0L)
@@ -282,6 +290,7 @@ test "review 不修改入参（纯函数）" {
   assert_true(approx(st.interval_days, 0.0, 0.000000001))
 }
 
+///|
 test "due 按间隔推进" {
   let sched = Sm2::new()
   let st = sched.init("c1", 0L)
@@ -296,6 +305,7 @@ test "due 按间隔推进" {
   inspect(s3.due.to_string(), content="1900800")
 }
 
+///|
 test "lapses 只在答错时增加" {
   let sched = Sm2::new()
   let mut state = sched.init("c1", 0L)
@@ -307,6 +317,7 @@ test "lapses 只在答错时增加" {
   inspect(state.lapses, content="2")
 }
 
+///|
 test "reps 答对累加、答错归零" {
   let sched = Sm2::new()
   let mut state = sched.init("c1", 0L)
@@ -320,6 +331,7 @@ test "reps 答对累加、答错归零" {
   inspect(state.reps, content="1")
 }
 
+///|
 test "phase 随进度推进" {
   let sched = Sm2::new()
   let mut state = sched.init("c1", 0L)
@@ -337,10 +349,12 @@ test "phase 随进度推进" {
   inspect(Phase::label(state.phase), content="重学")
 }
 
+///|
 test "name 是 sm2" {
   inspect(Sm2::new().name(), content="sm2")
 }
 
+///|
 test "desired_retention 固定 0.9" {
   let r = Sm2::new().desired_retention()
   assert_true(approx(r, 0.9, 0.000000001))
@@ -350,6 +364,7 @@ test "desired_retention 固定 0.9" {
 // retrievability（近似值）
 // ─────────────────────────────────────────────────────────────────
 
+///|
 test "retrievability 在复习时刻为 1" {
   let sched = Sm2::new()
   let st = sched.init("c1", 0L)
@@ -357,29 +372,23 @@ test "retrievability 在复习时刻为 1" {
   assert_true(approx(r, 1.0, 0.000000001))
 }
 
+///|
 test "retrievability 在 t=S 处约为 0.9（校准点）" {
   let sched = Sm2::new()
   // 造一个 interval_days = 10 的状态
-  let st = {
-    ..sched.init("c1", 0L),
-    interval_days: 10.0,
-    stability: 10.0,
-  }
+  let st = { ..sched.init("c1", 0L), interval_days: 10.0, stability: 10.0, }
   // t = 10 天
   let r = sched.retrievability(st, 864000L)
   assert_true(approx(r, 0.9, 0.000000001))
 }
 
+///|
 test "retrievability 随时间单调下降" {
   let sched = Sm2::new()
-  let st = {
-    ..sched.init("c1", 0L),
-    interval_days: 10.0,
-    stability: 10.0,
-  }
+  let st = { ..sched.init("c1", 0L), interval_days: 10.0, stability: 10.0, }
   let mut prev = 1.1
   for d in [0, 1, 2, 5, 10, 20, 50] {
-    let now : Timestamp = Int::to_int64(d) * 86400L
+    let now : Timestamp = Int32::to_int64(d) * 86400L
     let r = sched.retrievability(st, now)
     assert_true(r <= prev)
     assert_true(r >= 0.0)
@@ -388,19 +397,17 @@ test "retrievability 随时间单调下降" {
   }
 }
 
+///|
 test "retrievability 值域夹在 [0,1]" {
   let sched = Sm2::new()
-  let st = {
-    ..sched.init("c1", 0L),
-    interval_days: 1.0,
-    stability: 1.0,
-  }
+  let st = { ..sched.init("c1", 0L), interval_days: 1.0, stability: 1.0, }
   // 极端逾期 1000 天
   let r = sched.retrievability(st, 1000L * 86400L)
   assert_true(r >= 0.0)
   assert_true(r <= 1.0)
 }
 
+///|
 test "retrievability 对无间隔的新卡用 1 天兜底" {
   let sched = Sm2::new()
   let st = sched.init("c1", 0L) // interval_days = 0

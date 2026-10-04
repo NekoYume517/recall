@@ -5,6 +5,7 @@
 //
 // 共享辅助函数 `approx` 在 test_helpers_test.mbt。
 
+///|
 test "new 是 5 盒 1/2/4/8/16" {
   let l = Leitner::new()
   inspect(l.boxes, content="5")
@@ -16,10 +17,12 @@ test "new 是 5 盒 1/2/4/8/16" {
   assert_true(approx(l.intervals[4], 16.0, 0.000000001))
 }
 
+///|
 test "name 是 leitner" {
   inspect(Leitner::new().name(), content="leitner")
 }
 
+///|
 test "init 是新卡在盒 1" {
   let sched = Leitner::new()
   let st = sched.init("c1", 1000L)
@@ -38,6 +41,7 @@ test "init 是新卡在盒 1" {
 // 答对进下一盒：间隔应走 1 → 2 → 4 → 8 → 16 → 16（封顶）
 // ─────────────────────────────────────────────────────────────────
 
+///|
 test "连续 Good 走完 5 盒：1,2,4,8,16 然后封顶" {
   let sched = Leitner::new()
   let mut state = sched.init("c1", 0L)
@@ -52,6 +56,7 @@ test "连续 Good 走完 5 盒：1,2,4,8,16 然后封顶" {
   }
 }
 
+///|
 test "盒号随 Good 递增并在 5 封顶" {
   let sched = Leitner::new()
   let mut state = sched.init("c1", 0L)
@@ -67,6 +72,7 @@ test "盒号随 Good 递增并在 5 封顶" {
   assert_true(approx(state.interval_days, 16.0, 0.000000001))
 }
 
+///|
 test "Easy 也算答对（进盒）" {
   let sched = Leitner::new()
   let st = sched.init("c1", 0L)
@@ -79,6 +85,7 @@ test "Easy 也算答对（进盒）" {
 // 答错回盒 1
 // ─────────────────────────────────────────────────────────────────
 
+///|
 test "Again 回到盒 1" {
   let sched = Leitner::new()
   let mut state = sched.init("c1", 0L)
@@ -94,6 +101,7 @@ test "Again 回到盒 1" {
   assert_true(approx(state.interval_days, 1.0, 0.000000001))
 }
 
+///|
 test "Hard 也算答对（进盒），与 SM-2 判定一致" {
   let sched = Leitner::new()
   let mut state = sched.init("c1", 0L)
@@ -111,6 +119,7 @@ test "Hard 也算答对（进盒），与 SM-2 判定一致" {
   inspect(is_recalled(Grade::Hard), content="true")
 }
 
+///|
 test "答错后能重新往上爬" {
   let sched = Leitner::new()
   let mut state = sched.init("c1", 0L)
@@ -129,6 +138,7 @@ test "答错后能重新往上爬" {
 // 计数与阶段
 // ─────────────────────────────────────────────────────────────────
 
+///|
 test "lapses 只在答错时增加" {
   let sched = Leitner::new()
   let mut state = sched.init("c1", 0L)
@@ -140,6 +150,7 @@ test "lapses 只在答错时增加" {
   inspect(state.lapses, content="2")
 }
 
+///|
 test "reps 只在答对时累加" {
   let sched = Leitner::new()
   let mut state = sched.init("c1", 0L)
@@ -152,6 +163,7 @@ test "reps 只在答对时累加" {
   inspect(state.reps, content="2")
 }
 
+///|
 test "phase: 盒 <3 是 Learning，>=3 是 Review" {
   let sched = Leitner::new()
   let mut state = sched.init("c1", 0L)
@@ -163,6 +175,7 @@ test "phase: 盒 <3 是 Learning，>=3 是 Review" {
   inspect(Phase::label(state.phase), content="复习")
 }
 
+///|
 test "phase: 从未复习就答错仍是 Learning，复习过后答错是 Relearning" {
   let sched = Leitner::new()
   // 新卡直接答错
@@ -175,6 +188,7 @@ test "phase: 从未复习就答错仍是 Learning，复习过后答错是 Relear
   inspect(Phase::label(l2.phase), content="重学")
 }
 
+///|
 test "due 按盒间隔推进" {
   let sched = Leitner::new()
   let st = sched.init("c1", 0L)
@@ -186,6 +200,7 @@ test "due 按盒间隔推进" {
   inspect(s2.due.to_string(), content="518400")
 }
 
+///|
 test "review 不修改入参" {
   let sched = Leitner::new()
   let st = sched.init("c1", 0L)
@@ -198,6 +213,7 @@ test "review 不修改入参" {
 // 自定义盒数与间隔表
 // ─────────────────────────────────────────────────────────────────
 
+///|
 test "with_boxes 生成 2 的幂间隔表" {
   let l = Leitner::with_boxes(3)
   inspect(l.boxes, content="3")
@@ -207,12 +223,14 @@ test "with_boxes 生成 2 的幂间隔表" {
   assert_true(approx(l.intervals[2], 4.0, 0.000000001))
 }
 
+///|
 test "with_boxes 夹到 1..20" {
   inspect(Leitner::with_boxes(0).boxes, content="1")
   inspect(Leitner::with_boxes(-5).boxes, content="1")
   inspect(Leitner::with_boxes(999).boxes, content="20")
 }
 
+///|
 test "3 盒的调度器在盒 3 封顶" {
   let sched = Leitner::with_boxes(3)
   let mut state = sched.init("c1", 0L)
@@ -227,6 +245,7 @@ test "3 盒的调度器在盒 3 封顶" {
 // retrievability（基线约定值）
 // ─────────────────────────────────────────────────────────────────
 
+///|
 test "retrievability 未到期恒为 1" {
   let sched = Leitner::new()
   let st = sched.init("c1", 0L) // due = 0，间隔 1 天
@@ -238,6 +257,7 @@ test "retrievability 未到期恒为 1" {
   assert_true(approx(r2, 1.0, 0.000000001))
 }
 
+///|
 test "retrievability 逾期后线性衰减" {
   let sched = Leitner::new()
   let st = sched.init("c1", 0L) // due = 0，间隔 1 天 = 86400 秒
@@ -249,12 +269,13 @@ test "retrievability 逾期后线性衰减" {
   assert_true(approx(r2, 0.0, 0.000001))
 }
 
+///|
 test "retrievability 单调下降且夹在 [0,1]" {
   let sched = Leitner::new()
   let st = sched.init("c1", 0L)
   let mut prev = 1.1
   for d in [0, 0, 1, 2, 5, 100] {
-    let now : Timestamp = Int::to_int64(d) * 86400L
+    let now : Timestamp = Int32::to_int64(d) * 86400L
     let r = sched.retrievability(st, now)
     assert_true(r <= prev)
     assert_true(r >= 0.0)
@@ -263,6 +284,7 @@ test "retrievability 单调下降且夹在 [0,1]" {
   }
 }
 
+///|
 test "desired_retention 固定 1.0" {
   let r = Leitner::new().desired_retention()
   assert_true(approx(r, 1.0, 0.000000001))
@@ -272,6 +294,7 @@ test "desired_retention 固定 1.0" {
 // 跨调度器：Leitner 的间隔增长慢于 SM-2（对照基线的意义）
 // ─────────────────────────────────────────────────────────────────
 
+///|
 test "同样 Good x5，Leitner 的最终间隔远小于 SM-2" {
   let sm2 = Sm2::new()
   let leit = Leitner::new()
@@ -287,6 +310,7 @@ test "同样 Good x5，Leitner 的最终间隔远小于 SM-2" {
   assert_true(s_leit.interval_days < s_sm2.interval_days)
 }
 
+///|
 test "三个调度器都能通过同一 trait 调用（AnyScheduler 分发）" {
   let st = CardState::new("c1", 0L)
   for name in ["sm2", "fsrs", "leitner"] {
@@ -299,6 +323,7 @@ test "三个调度器都能通过同一 trait 调用（AnyScheduler 分发）" {
   }
 }
 
+///|
 test "scheduler_name_valid 与 by_name 一致" {
   inspect(scheduler_name_valid("sm2"), content="true")
   inspect(scheduler_name_valid("fsrs"), content="true")

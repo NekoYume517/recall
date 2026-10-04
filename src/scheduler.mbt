@@ -28,7 +28,7 @@ pub trait Scheduler {
   ///|
   /// 调度器名字，用于 CLI、报告和跨算法对比表。
   /// 约定小写短名：`"sm2"` / `"fsrs"` / `"leitner"`。
-  name(Self) -> String
+  fn name(Self) -> String
 
   ///|
   /// 新卡初始化。
@@ -40,7 +40,7 @@ pub trait Scheduler {
   /// - 允许把算法自己的初值写进 `CardState` 的通用字段
   ///   （例如 SM-2 把初始 EF 写进 `difficulty`，Leitner 把盒号写成 1）。
   ///   这样重放时无需再问调度器"这张卡的初始参数是多少"。
-  init(Self, card_id : String, now : Timestamp) -> CardState
+  fn init(Self, card_id : String, now : Timestamp) -> CardState
 
   ///|
   /// 应用一次复习，返回**新**状态（不得就地修改入参）。
@@ -50,7 +50,7 @@ pub trait Scheduler {
   /// - 维护 `reps`（成功次数）、`lapses`（遗忘次数）、`interval_days`。
   /// - 更新算法自身的记忆参数（FSRS 的 S/D、SM-2 的 EF、Leitner 的盒号）。
   /// - `phase` 要与间隔一致：短间隔是 Learning，长间隔是 Review。
-  review(Self, state : CardState, grade : Grade, now : Timestamp) -> CardState
+  fn review(Self, state : CardState, grade : Grade, now : Timestamp) -> CardState
 
   ///|
   /// 当前可提取性 R(now)，即"此刻还记得的概率"。返回值必须在 [0, 1]。
@@ -66,7 +66,7 @@ pub trait Scheduler {
   ///   这里用分段线性：到期前恒为 1.0，逾期后按 (1 - 逾期比例) 线性衰减到 0。
   ///
   /// 因此跨算法比较 retrievability 时，只有 FSRS 的数值有物理意义。
-  retrievability(Self, state : CardState, now : Timestamp) -> Double
+  fn retrievability(Self, state : CardState, now : Timestamp) -> Double
 
   ///|
   /// 目标保持率（FSRS 的 desired_retention，默认 0.9）。
@@ -74,7 +74,7 @@ pub trait Scheduler {
   /// - `Fsrs`：调用方配置的值，间隔按它反解。
   /// - `Sm2`：固定 0.9（与 retrievability 的校准点一致）。
   /// - `Leitner`：固定 1.0（盒模型只要求"到期就复习"）。
-  desired_retention(Self) -> Double
+  fn desired_retention(Self) -> Double
 }
 
 ///|
@@ -98,16 +98,16 @@ pub(all) struct Fsrs {
 /// 保留它们是避免 recall-engine 用 `w[19]`/`w[20]` 时越界。
 pub fn fsrs_default_w() -> Array[Double] {
   [
-    0.40255, 1.18385, 3.173, 15.69105, 7.1949, 0.5345, 1.4604, 0.0046, 1.54575,
-    0.1192, 1.01925, 1.9395, 0.11, 0.29605, 2.2698, 0.2315, 2.9898, 0.51655,
-    0.6621, 0.0, 0.0,
+    0.40255, 1.18385, 3.173, 15.69105, 7.1949, 0.5345, 1.4604, 0.0046, 1.54575, 0.1192,
+    1.01925, 1.9395, 0.11, 0.29605, 2.2698, 0.2315, 2.9898, 0.51655, 0.6621, 0.0,
+    0.0,
   ]
 }
 
 ///|
 /// 默认 FSRS 实例：官方权重 + 90% 目标保持率。
 pub fn Fsrs::new() -> Fsrs {
-  { w: fsrs_default_w(), desired_retention: 0.9 }
+  { w: fsrs_default_w(), desired_retention: 0.9, }
 }
 
 ///|
@@ -117,19 +117,15 @@ pub fn Fsrs::with_params(w : Array[Double]) -> Fsrs {
   if w.length() < 19 {
     Fsrs::new()
   } else {
-    { w, desired_retention: 0.9 }
+    { w, desired_retention: 0.9, }
   }
 }
 
 ///|
 /// 只改目标保持率的构造器，间隔会按它反解。
 pub fn Fsrs::with_retention(retention : Double) -> Fsrs {
-  let r = if retention <= 0.0 || retention >= 1.0 {
-    0.9
-  } else {
-    retention
-  }
-  { w: fsrs_default_w(), desired_retention: r }
+  let r = if retention <= 0.0 || retention >= 1.0 { 0.9 } else { retention }
+  { w: fsrs_default_w(), desired_retention: r, }
 }
 
 ///|
@@ -143,6 +139,7 @@ pub(all) enum AnyScheduler {
   Fsrs(Fsrs)
   Leitner(Leitner)
 } derive(Debug)
+
 ///|
 /// 按名字构造调度器。未知名字退回 Leitner（最保守的基线），不抛错——
 /// CLI 用 `scheduler_name_valid` 先校验，再决定是否以 exit code 2 退出。
@@ -177,9 +174,10 @@ pub fn scheduler_names() -> Array[String] {
 // `Fsrs::with_params` / `Fsrs::with_retention` / `fsrs_default_w`
 // 仍留在本文件，供 `AnyScheduler` 与下游使用。
 // ─────────────────────────────────────────────────────────────────
+
 ///|
 /// 运行期名字。
-pub impl Scheduler for AnyScheduler with name(self) {
+pub impl Scheduler for AnyScheduler with fn name(self) {
   match self {
     Sm2(s) => Scheduler::name(s)
     Fsrs(s) => Scheduler::name(s)
@@ -189,7 +187,7 @@ pub impl Scheduler for AnyScheduler with name(self) {
 
 ///|
 /// 运行期初始化。
-pub impl Scheduler for AnyScheduler with init(self, card_id, now) {
+pub impl Scheduler for AnyScheduler with fn init(self, card_id, now) {
   match self {
     Sm2(s) => Scheduler::init(s, card_id, now)
     Fsrs(s) => Scheduler::init(s, card_id, now)
@@ -199,7 +197,7 @@ pub impl Scheduler for AnyScheduler with init(self, card_id, now) {
 
 ///|
 /// 运行期复习。
-pub impl Scheduler for AnyScheduler with review(self, state, grade, now) {
+pub impl Scheduler for AnyScheduler with fn review(self, state, grade, now) {
   match self {
     Sm2(s) => Scheduler::review(s, state, grade, now)
     Fsrs(s) => Scheduler::review(s, state, grade, now)
@@ -209,7 +207,7 @@ pub impl Scheduler for AnyScheduler with review(self, state, grade, now) {
 
 ///|
 /// 运行期可提取性。
-pub impl Scheduler for AnyScheduler with retrievability(self, state, now) {
+pub impl Scheduler for AnyScheduler with fn retrievability(self, state, now) {
   match self {
     Sm2(s) => Scheduler::retrievability(s, state, now)
     Fsrs(s) => Scheduler::retrievability(s, state, now)
@@ -219,7 +217,7 @@ pub impl Scheduler for AnyScheduler with retrievability(self, state, now) {
 
 ///|
 /// 运行期目标保持率。
-pub impl Scheduler for AnyScheduler with desired_retention(self) {
+pub impl Scheduler for AnyScheduler with fn desired_retention(self) {
   match self {
     Sm2(s) => Scheduler::desired_retention(s)
     Fsrs(s) => Scheduler::desired_retention(s)

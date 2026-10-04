@@ -27,8 +27,8 @@ pub(all) struct ReviewLog {
 ///|
 /// 日志读写错误。带行号，方便用户直接定位文件问题。
 pub(all) suberror LogError {
-  BadLine(Int, String)
-  BadTimestamp(Int, String)
+  BadLine(Int32, String)
+  BadTimestamp(Int32, String)
 } derive(Debug)
 
 ///|
@@ -70,12 +70,8 @@ pub fn ReviewEvent::new(
   grade : Grade,
   elapsed_days : Double,
 ) -> ReviewEvent {
-  let e = if elapsed_days < 0.0 {
-    0.0
-  } else {
-    elapsed_days
-  }
-  { card_id, reviewed_at, due_at, grade, elapsed_days: e }
+  let e = if elapsed_days < 0.0 { 0.0 } else { elapsed_days }
+  { card_id, reviewed_at, due_at, grade, elapsed_days: e, }
 }
 
 ///|
@@ -102,7 +98,7 @@ pub fn ReviewEvent::equal(a : ReviewEvent, b : ReviewEvent) -> Bool {
 ///|
 /// 空日志。
 pub fn ReviewLog::new() -> ReviewLog {
-  { events: [] }
+  { events: [], }
 }
 
 ///|
@@ -113,7 +109,7 @@ pub fn ReviewLog::push(self : ReviewLog, ev : ReviewEvent) -> Unit {
 
 ///|
 /// 事件条数。
-pub fn ReviewLog::length(self : ReviewLog) -> Int {
+pub fn ReviewLog::length(self : ReviewLog) -> Int32 {
   self.events.length()
 }
 
@@ -137,7 +133,7 @@ pub fn ReviewLog::by_card(self : ReviewLog) -> Map[String, Array[ReviewEvent]] {
   }
   for key, bucket in groups {
     // 稳定排序：比较 reviewed_at，相等时返回 -1 以保住原顺序。
-    let indexed : Array[(Int, ReviewEvent)] = []
+    let indexed : Array[(Int32, ReviewEvent)] = []
     for i, ev in bucket {
       indexed.push((i, ev))
     }
@@ -207,7 +203,7 @@ pub fn ReviewLog::to_jsonl(self : ReviewLog) -> String {
 fn field_string(
   obj : Map[String, Json],
   key : String,
-  line_no : Int,
+  line_no : Int32,
 ) -> String raise LogError {
   match obj.get(key) {
     Some(String(s)) => s
@@ -222,7 +218,7 @@ fn field_string(
 fn field_timestamp(
   obj : Map[String, Json],
   key : String,
-  line_no : Int,
+  line_no : Int32,
 ) -> Timestamp raise LogError {
   match obj.get(key) {
     Some(Number(n, ..)) => {
@@ -243,7 +239,7 @@ fn field_timestamp(
 fn field_double(
   obj : Map[String, Json],
   key : String,
-  line_no : Int,
+  line_no : Int32,
 ) -> Double raise LogError {
   match obj.get(key) {
     Some(Number(n, ..)) => n
@@ -254,10 +250,11 @@ fn field_double(
 
 ///|
 /// 单行 → 事件。所有错误都带上行号。
-fn event_from_line(line : StringView, line_no : Int) -> ReviewEvent raise LogError {
-  let parsed : Json = try {
-    @json.parse(line)
-  } catch {
+fn event_from_line(
+  line : StringView,
+  line_no : Int32,
+) -> ReviewEvent raise LogError {
+  let parsed : Json = @json.parse(line) catch {
     _ => raise BadLine(line_no, "不是合法 JSON")
   }
   let obj = match parsed {
@@ -280,7 +277,9 @@ fn event_from_line(line : StringView, line_no : Int) -> ReviewEvent raise LogErr
 /// - 空行（含只有空白字符的行）跳过，但仍然**计入行号**
 /// - 行号从 1 开始，指向原始文件里的实际行
 /// - 任一坏行立即返回 `Err`，不做部分成功（重放需要完整历史）
-pub fn ReviewLog::from_jsonl(text : StringView) -> Result[ReviewLog, LogError] raise {
+pub fn ReviewLog::from_jsonl(
+  text : StringView,
+) -> Result[ReviewLog, LogError] raise {
   let log = ReviewLog::new()
   let lines = text.split("\n").collect()
   for i, raw in lines {
@@ -289,11 +288,7 @@ pub fn ReviewLog::from_jsonl(text : StringView) -> Result[ReviewLog, LogError] r
     if trimmed == "" {
       continue
     }
-    let ev = try {
-      event_from_line(trimmed, line_no)
-    } catch {
-      e => return Err(e)
-    }
+    let ev = event_from_line(trimmed, line_no) catch { e => return Err(e) }
     log.push(ev)
   }
   Ok(log)

@@ -84,6 +84,25 @@ JSONL 每行格式（**字段名固定**）：
 {"card_id":"c1","reviewed_at":1700000000,"due_at":1699999000,"grade":3,"elapsed_days":1.0}
 ```
 
+### ⚠️ `grade` 字段是有损归一化的
+
+`Grade` 是 4 档枚举，但 JSON 里的 `grade` 是 0..5 的整数：
+
+```
+from_int:  0 → Again, 1|2 → Hard, 3 → Good, 4|5 → Easy
+to_int:    Again=0, Hard=2, Good=3, Easy=5
+```
+
+因此 **`"grade":4` 读入后写回会变成 `"grade":5`**（两者都归一化为 Easy，输出时用 `Easy` 的代表值 5）。
+
+这**不是 bug**，是「4 档枚举 ↔ 6 值整数」的固有映射。但写往返测试时要注意：
+
+- ❌ 「JSONL 往返逐字节一致」——对含 `grade:4` 的输入会失败
+- ✅ 「往返**幂等**」——第 2 次和第 3 次序列化完全一致
+- ✅ 「只有 `grade` 字段变化，其余字段逐字节不变」
+
+`elapsed_days` 同理：`0` 与 `0.0` 的文本形式可能不同，按浮点比较而非字符串比较。
+
 ## 3. 调度器接口 `src/scheduler.mbt`
 
 ```moonbit
@@ -126,22 +145,52 @@ pub impl Scheduler for Sm2
 规则（**严格按此实现**）：
 
 ```
-grade < 3（答错）:
+q 的映射（唯一权威定义，不要再自己发明）:
+    Again → 2
+    Hard  → 3
+    Good  → 4
+    Easy  → 5
+
+答错判定用 q < 3（即只有 Again 算答错）:
+
+q < 3（答错）:
     repetitions = 0
     interval_days = 1.0
-    （EF 不变）
+    （EF 仍按下面的公式更新）
 
-grade >= 3（答对）:
+q >= 3（答对）:
     repetitions += 1
     if repetitions == 1: interval = 1
     elif repetitions == 2: interval = 6
     else: interval = round(interval_prev * EF)
 
-EF 更新（每次复习都做）:
-    q = grade 映射到 0..5（Again→2, Hard→3, Good→4, Easy→5）
+EF 更新（每次复习都做，用更新前的 EF 算间隔）:
     EF = EF + (0.1 - (5-q) * (0.08 + (5-q) * 0.02))
     EF = max(1.3, EF)
 ```
+
+**注意两个容易搞错的点：**
+1. `Grade::to_int` 的返回值（Again=0/Hard=2/Good=3/Easy=5）**不是** SM-2 的 `q`。`q` 必须用上面这张表单独映射。
+2. `interval` 用**上一次的 EF** 算，然后再更新 EF。
+
+### SM-2 权威参考值（手算 + 独立实现双重核对，测试必须匹配）
+
+从新卡 `EF=2.5, reps=0` 开始：
+
+| 输入序列 | 每次的 interval（天） | 每次后的 EF |
+|---|---|---|
+| Good, Good, Good, Good, Good | 1, 6, 15, 38, 95 | 2.5, 2.5, 2.5, 2.5, 2.5 |
+| Easy, Easy, Easy | 1, 6, 16 | 2.6, 2.7, 2.8 |
+| Hard, Hard, Hard | 1, 6, 13 | 2.36, 2.22, 2.08 |
+| Good, Good, Again, Good | 1, 6, 1, 1 | 2.5, 2.5, 2.18, 2.18 |
+
+验证 `Good, Good, Good` 第三个间隔：`round(6 * 2.5) = 15`。
+验证 `Easy` 第一个 EF：`2.5 + (0.1 - 0*(0.08+0*0.02)) = 2.6`。
+验证 `Hard` 第一个 EF：`q=3`，`2.5 + (0.1 - 2*(0.08+2*0.02)) = 2.5 + (0.1-0.24) = 2.36`。
+验证 `Again` 的 EF（**易错**）：`q=2`，`2.5 + (0.1 - 3*(0.08+3*0.02)) = 2.5 + (0.1-0.42) = 2.18`。
+（若误把 Again 当 `q=0`，会得到 `2.5 + (0.1-0.9) = 1.7`——这是错的，因为 `q=0` 不在映射表内。）
+
+`@math.round` 是 half-up：`round(2.5)=3`、`round(37.5)=38`。
 
 ### 3.2 FSRS-style `src/fsrs.mbt`
 
@@ -173,23 +222,39 @@ pub impl Scheduler for Fsrs
   D_0(g) = w[4] - exp(w[5] * (g - 1)) + 1
   D_0 截断到 [1, 10]
 
-难度更新：
-  D' = D - w[6] * (g - 3)
-  D'' = mean_reversion(w[4], D')      // w[7] 控制回归强度
+难度更新（**三个易错点都标在下面**）：
+  delta_D = -w[6] * (g - 3) * (10 - D) / 9
+      ⚠️ 末尾的 (10-D)/9 是 linear damping，**不能省**。
+         省掉后 delta_D 与当前难度无关，D=8 连续 Again 第一次就顶到 10
+         且再也降不下来；带阻尼是 8.62→9.04→9.33→9.52→9.64 平滑收敛。
+         难度失去分辨率会系统性高估难卡的间隔增长。
+
+  D' = D + delta_D
+  D'' = w[7] * D_0(4) + (1 - w[7]) * D'
+      ⚠️ mean reversion 的目标是 **D_0(4) = 3.2245**，不是 w[4] = 7.1949。
+         官方 py-fsrs 参考实现用 D_0(4)。两者差 3.97，虽然 w[7]=0.0046
+         使单步影响只有 0.018，但方向性错误会累积。
   D'' 截断到 [1, 10]
 
-成功回忆的稳定性增长：
-  S' = S * (1 + exp(w[8]) * (11 - D) * S^(-w[9])
+成功回忆的稳定性增长（**用更新后的新 D，不是旧 D**）：
+  S' = S * (1 + exp(w[8]) * (11 - D_new) * S^(-w[9])
              * (exp(w[10] * (1 - R)) - 1)
              * (w[15] if g==2 else 1)
              * (w[16] if g==4 else 1))
+      ⚠️ 官方的顺序是「先更新 D，再用新 D 算 S」。用旧 D 会系统性低估约 1 天。
 
 遗忘后的稳定性：
   S' = w[11] * D^(-w[12]) * ((S+1)^w[13] - 1) * exp(w[14] * (1 - R))
 
 下次间隔：
   I = S / FACTOR * (desired_retention^(1/DECAY) - 1)
-  至少 1 天，四舍五入
+  至少 1 天，四舍五入，**并且必须夹到 max_interval_days() = 36500（100 年）**
+
+  ⚠️ 不夹上限的后果（真实 bug）：
+     FSRS 连续 Easy 到第 46 次，interval 会到 4.19e14 天，
+     `now + interval*86400` 超过 Int64 上限，due **回绕成负数**。
+     due 为负 → is_due() 永远 true → 卡片永久到期，replay/simulate/stats 全崩。
+     因此 `add_days()` 也必须夹住超限、负数和 NaN。
 ```
 
 要求：**公式必须逐项可核对**，每一项注释对应的 w 下标。
