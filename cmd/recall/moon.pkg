@@ -1,5 +1,5 @@
 import {
-  "moonbit-hack/recall/src" @lib,
+  "NekoYume517/recall/src" @lib,
   "moonbitlang/x/sys",
   "moonbitlang/x/fs",
   "moonbitlang/core/env",
@@ -15,3 +15,4 @@ pkgtype(kind: "executable")
 // 只关掉这三类纯噪音警告；真正的类型错误、模式匹配遗漏等仍会报出。
 
 warnings = "-implicit_impl_as_method-unused_package-test_unqualified_package-deprecated"
+
