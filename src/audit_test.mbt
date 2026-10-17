@@ -58,3 +58,72 @@ test "audit: by_card 对同一秒多条保持文件顺序（跨卡片）" {
     None => inspect("missing x", content="found")
   }
 }
+
+// ─────────────────────────────────────────────────────────────────
+// 第二轮：JSONL 极端输入（全部通过 → 确认无 bug）
+// ─────────────────────────────────────────────────────────────────
+
+///|
+test "audit: field_timestamp 拒绝超大时间戳（Int64 溢出防护）" {
+  let text = "{\"card_id\":\"c1\",\"reviewed_at\":9000000000000,\"due_at\":0,\"grade\":3,\"elapsed_days\":1}\n"
+  match ReviewLog::from_jsonl(text) {
+    Ok(_) => inspect("overflow accepted", content="rejected")
+    Err(BadTimestamp(_, _)) => inspect("rejected", content="rejected")
+    Err(_) => inspect("wrong error", content="BadTimestamp")
+  }
+}
+
+///|
+test "audit: JSONL 负时间戳下界合法（公元 1 年）" {
+  let text = "{\"card_id\":\"c1\",\"reviewed_at\":-62135596800,\"due_at\":-62135596800,\"grade\":3,\"elapsed_days\":0}\n"
+  match ReviewLog::from_jsonl(text) {
+    Ok(log) => inspect(log.events[0].reviewed_at.to_string(), content="-62135596800")
+    Err(_) => inspect("rejected", content="accepted")
+  }
+}
+
+///|
+test "audit: grade 2.7 四舍五入为 Good(3)" {
+  let text = "{\"card_id\":\"c1\",\"reviewed_at\":100,\"due_at\":0,\"grade\":2.7,\"elapsed_days\":1}\n"
+  match ReviewLog::from_jsonl(text) {
+    Ok(log) => inspect(Grade::label(log.events[0].grade), content="good")
+    Err(_) => inspect("rejected", content="parsed")
+  }
+}
+
+///|
+test "audit: grade -0.4 → Again" {
+  let text = "{\"card_id\":\"c1\",\"reviewed_at\":100,\"due_at\":0,\"grade\":-0.4,\"elapsed_days\":1}\n"
+  match ReviewLog::from_jsonl(text) {
+    Ok(log) => inspect(Grade::label(log.events[0].grade), content="again")
+    Err(_) => inspect("rejected", content="parsed")
+  }
+}
+
+///|
+test "audit: JSONL NaN grade 被拒绝" {
+  let text = "{\"card_id\":\"c1\",\"reviewed_at\":100,\"due_at\":0,\"grade\":NaN,\"elapsed_days\":1}\n"
+  match ReviewLog::from_jsonl(text) {
+    Ok(_) => inspect("nan accepted", content="rejected")
+    Err(_) => inspect("rejected", content="rejected")
+  }
+}
+
+///|
+test "audit: 重复 card_id+时间戳的两条事件都保留且稳定有序" {
+  let text = "{\"card_id\":\"c1\",\"reviewed_at\":100,\"due_at\":0,\"grade\":3,\"elapsed_days\":0}\n{\"card_id\":\"c1\",\"reviewed_at\":100,\"due_at\":0,\"grade\":1,\"elapsed_days\":0}\n"
+  match ReviewLog::from_jsonl(text) {
+    Ok(log) => {
+      inspect(log.length(), content="2")
+      let groups = log.by_card()
+      match groups.get("c1") {
+        Some(arr) => {
+          inspect(Grade::label(arr[0].grade), content="good")
+          inspect(Grade::label(arr[1].grade), content="hard")
+        }
+        None => inspect("missing c1", content="found")
+      }
+    }
+    Err(_) => inspect("rejected", content="parsed")
+  }
+}
