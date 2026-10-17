@@ -288,7 +288,16 @@ pub fn ReviewLog::from_jsonl(
     if trimmed == "" {
       continue
     }
-    let ev = event_from_line(trimmed, line_no) catch { e => return Err(e) }
+    // UTF-8 BOM：Windows 记事本、PowerShell `>` 重定向等工具会在文件头
+    // 写入 U+FEFF。它不属于 JSON，却会让第一行的 `@json.parse` 失败，
+    // 整份合法日志被当成数据错误拒收。只剥首行行首的一个 BOM。
+    let cleaned : StringView = if i == 0 && trimmed.has_prefix("﻿") {
+      // 去掉 BOM（UTF-16 下的单个码元 U+FEFF），切片不复制
+      trimmed[1:trimmed.length()]
+    } else {
+      trimmed
+    }
+    let ev = event_from_line(cleaned, line_no) catch { e => return Err(e) }
     log.push(ev)
   }
   Ok(log)
