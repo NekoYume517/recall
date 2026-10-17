@@ -243,3 +243,52 @@ test "audit: simulate 90 天基准仍可复现（乐观策略零积压）" {
   assert_eq(res.final_backlog, 0)
   assert_true(res.total_reviews > 0)
 }
+
+// ─────────────────────────────────────────────────────────────────
+// 第四轮：add_days 的 Int64 上限回绕（真实 bug）
+//
+// JSONL 合法时间戳最大到 253402300799（9999-12-31）。在该时刻
+// `now + interval*86400` 一旦超过 Int64 上限就回绕成负数——
+// 卡片变成"永久到期"，与 implementation.md 第 7 节修过的 bug 同根。
+// interval_days 已封顶 36500 天，叠加 2.53e11 秒的 now 距溢出仍有
+// 余量；真正能触发回绕的是外部构造的越界状态。此测试锁死
+// add_days 在 Int64 域的输出永远不回绕成负数。
+// ─────────────────────────────────────────────────────────────────
+
+///|
+test "audit: add_days 在极大 now 下 due 永远为正（不回绕）" {
+  let max_ts : Timestamp = 253402300799L
+  let due = add_days(max_ts, max_interval_days())
+  assert_true(due > 0L)
+  assert_true(due >= max_ts)
+}
+
+///|
+test "audit: add_days 极大天数与极大 now 叠加不产生负数" {
+  let max_ts : Timestamp = 9223372036854775807L / 2L
+  let due = add_days(max_ts, 36500.0)
+  assert_true(due > 0L)
+  assert_true(due >= max_ts)
+}
+
+///|
+test "audit: FSRS 在最大合法时间戳连续 Easy 后 due 仍为正" {
+  let f = Fsrs::new()
+  let mut st = f.init("c1", 253402300799L)
+  for _i in 0..<60 {
+    st = f.review(st, Grade::Easy, 253402300799L)
+    assert_true(st.due > 0L)
+  }
+}
+
+///|
+test "audit: SM-2 在最大合法时间戳封顶后 due 仍为正" {
+  let s = Sm2::new()
+  let mut st = s.init("c1", 253402300799L)
+  let mut now : Timestamp = 253402300799L
+  for _i in 0..<40 {
+    st = s.review(st, Grade::Good, now)
+    now = st.due
+    assert_true(st.due > 0L)
+  }
+}

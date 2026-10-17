@@ -129,6 +129,10 @@ pub fn max_interval_days() -> Double {
 /// `days` 先夹到 `[0, max_interval_days()]`，杜绝 Int64 回绕
 /// （见 `max_interval_days()` 的说明）。负数按 0 处理：到期时间
 /// 不应早于"现在"，否则卡片会立刻反复到期。
+///
+/// 第二层防护：`now` 本身也可能在 Int64 上限附近（JSONL 合法范围是
+/// ±62135596800..253402300799 秒）。`now + 100 年` 会超出 Int64 回绕成
+/// 负数——卡片再次变成"永久到期"。因此结果必须在 Int64 域里再夹一次。
 pub fn add_days(now : Timestamp, days : Double) -> Timestamp {
   let d = if days.is_nan() || days < 0.0 {
     0.0
@@ -137,7 +141,18 @@ pub fn add_days(now : Timestamp, days : Double) -> Timestamp {
   } else {
     days
   }
-  now + @math.round(d * seconds_per_day()).to_int64()
+  let raw = now + @math.round(d * seconds_per_day()).to_int64()
+  // Int64 域饱和：now + interval 超过 Int64 上限会回绕成负数
+  // （raw < now 即是回绕特征），此时饱和到 Int64 最大值——
+  // `is_due` 用 `due <= now` 判定，饱和值永不被判为到期。
+  let max_ts : Int64 = 9223372036854775807L
+  if raw > max_ts {
+    max_ts
+  } else if raw < now {
+    max_ts
+  } else {
+    raw
+  }
 }
 
 ///|
