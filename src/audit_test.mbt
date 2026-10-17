@@ -1,6 +1,7 @@
 // 对抗性审查的回归测试（recall-audit）
 
 // 候选 1：Fsrs::with_params 负权重
+
 ///|
 test "audit: with_params 负权重退回默认" {
   let f = Fsrs::with_params([-1.0, -1.0])
@@ -77,7 +78,8 @@ test "audit: field_timestamp 拒绝超大时间戳（Int64 溢出防护）" {
 test "audit: JSONL 负时间戳下界合法（公元 1 年）" {
   let text = "{\"card_id\":\"c1\",\"reviewed_at\":-62135596800,\"due_at\":-62135596800,\"grade\":3,\"elapsed_days\":0}\n"
   match ReviewLog::from_jsonl(text) {
-    Ok(log) => inspect(log.events[0].reviewed_at.to_string(), content="-62135596800")
+    Ok(log) =>
+      inspect(log.events[0].reviewed_at.to_string(), content="-62135596800")
     Err(_) => inspect("rejected", content="accepted")
   }
 }
@@ -126,4 +128,118 @@ test "audit: 重复 card_id+时间戳的两条事件都保留且稳定有序" {
     }
     Err(_) => inspect("rejected", content="parsed")
   }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// 第三轮：算法数值边界
+// ─────────────────────────────────────────────────────────────────
+
+///|
+test "audit: with_params 21 项权重原样保留" {
+  let w = fsrs_default_w()
+  w[0] = 0.5
+  let f = Fsrs::with_params(w)
+  assert_eq(f.w.length(), 21)
+  assert_true(near(f.w[0], 0.5))
+}
+
+///|
+test "audit: with_params 25 项超长权重也接受（不崩溃）" {
+  let w = {
+    let base = fsrs_default_w()
+    base.push(1.0)
+    base.push(1.0)
+    base.push(1.0)
+    base.push(1.0)
+    base
+  }
+  let f = Fsrs::with_params(w)
+  assert_true(f.w.length() >= 21)
+  let st = f.review(f.init("c", 0L), Grade::Good, 0L)
+  assert_true(st.interval_days >= 1.0)
+}
+
+///|
+test "audit: 全零权重数组不产生 NaN" {
+  let zeros = Array::make(21, 0.0)
+  let f = Fsrs::with_params(zeros)
+  assert_eq(f.w.length(), 21)
+  let mut st = f.init("c", 0L)
+  let mut now : Timestamp = 0L
+  for _i in 0..<10 {
+    st = f.review(st, Grade::Good, now)
+    now = st.due
+    assert_true(st.interval_days >= 1.0)
+    assert_true(st.interval_days <= max_interval_days())
+    assert_true(!st.interval_days.is_nan())
+    assert_true(!st.difficulty.is_nan())
+    assert_true(!st.stability.is_nan())
+  }
+}
+
+///|
+test "audit: with_retention 极端值退回 0.9（契约）" {
+  assert_true(near(Fsrs::with_retention(0.0).desired_retention, 0.9))
+  assert_true(near(Fsrs::with_retention(1.0).desired_retention, 0.9))
+  assert_true(near(Fsrs::with_retention(-2.0).desired_retention, 0.9))
+  assert_true(near(Fsrs::with_retention(1.5).desired_retention, 0.9))
+  assert_true(near(Fsrs::with_retention(0.85).desired_retention, 0.85))
+}
+
+///|
+test "audit: interval_days 在极端输入下仍返回安全正值" {
+  assert_true(interval_days(10.0, 0.0) >= 1.0)
+  assert_true(interval_days(10.0, 1.0) >= 1.0)
+  assert_true(interval_days(10.0, 0.4999) >= 1.0)
+  assert_true(interval_days(10.0, 0.9999) >= 1.0)
+  assert_true(interval_days(1.0e18, 0.9) <= max_interval_days())
+  assert_true(!interval_days(1.0e18, 0.9).is_nan())
+}
+
+///|
+test "audit: FSRS 提前复习（未到期）不产生垃圾间隔" {
+  let f = Fsrs::new()
+  let st1 = f.review(f.init("c1", 0L), Grade::Good, 0L)
+  let early = st1.due - 2L * 86400L
+  assert_true(early > 0L)
+  let st2 = f.review(st1, Grade::Good, early)
+  assert_true(st2.interval_days >= 1.0)
+  assert_true(st2.due > early)
+  assert_true(!st2.stability.is_nan())
+}
+
+///|
+test "audit: 同一时刻重复复习保持安全" {
+  let f = Fsrs::new()
+  let mut st = f.init("c1", 100L)
+  for _i in 0..<8 {
+    st = f.review(st, Grade::Good, 100L)
+    assert_true(st.interval_days >= 1.0)
+    assert_true(st.due >= 100L)
+    assert_true(!st.stability.is_nan())
+  }
+}
+
+///|
+test "audit: SM-2 提前复习也不产生垃圾间隔" {
+  let s = Sm2::new()
+  let st1 = s.review(s.init("c1", 0L), Grade::Good, 0L)
+  let st2 = s.review(st1, Grade::Good, st1.due - 86400L)
+  assert_true(st2.interval_days >= 1.0)
+  assert_true(st2.due > st1.due - 86400L)
+}
+
+///|
+test "audit: simulate 90 天基准仍可复现（乐观策略零积压）" {
+  let cfg : SimConfig = {
+    days: 90,
+    new_per_day: 20,
+    review_limit: 200,
+    desired_retention: 0.9,
+    grade_fn: optimistic_policy(),
+    seed: 1L,
+  }
+  let res = simulate(AnyScheduler::by_name("fsrs"), cfg)
+  assert_eq(res.final_backlog, 0)
+  assert_true(res.total_reviews > 0)
 }
