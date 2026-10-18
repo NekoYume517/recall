@@ -489,7 +489,16 @@ fn cmd_replay(args : Args) -> Int32 {
       pad_right("卡片", 12) +
       pad_left("间隔(天)", 12) +
       pad_left("稳定性", 12) +
-      pad_left("难度", 9) +
+      pad_left(
+        if sched_name == "sm2" {
+          "EF"
+        } else if sched_name == "leitner" {
+          "盒号"
+        } else {
+          "难度"
+        },
+        9,
+      ) +
       pad_left("复习", 7) +
       pad_left("遗忘", 7) +
       "  阶段",
@@ -916,8 +925,15 @@ fn cmd_curve(args : Args) -> Int32 {
   println("保持率曲线: " + path + "（" + buckets.to_string() + " 桶）")
   println("")
   if curve.length() == 0 {
+    // R5：空结果有两种原因，混在一句里会误导——「每卡只有一次复习」
+    // 和「日志为空」是不同的问题。另外说明分桶语义：elapsed_days 恰好
+    // 等于桶上界的样本会落入下一桶（floor 除法），边界归属有 ±1 桶宽
+    // 的模糊，这是与 compute_stats（直接对事件算）数值不同的原因之一。
     println(
-      "（日志中没有可用的间隔样本：同一张卡至少要有两次复习）",
+      "（保持率曲线为空：分桶需要同卡多次复习产生的正间隔样本；",
+    )
+    println(
+      "  日志为空、每卡仅一次复习、或所有间隔都落在最后一个桶边界之后时结果为空）",
     )
     return 0
   }

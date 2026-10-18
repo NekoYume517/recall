@@ -123,8 +123,24 @@ pub fn Fsrs::with_params(w : Array[Double]) -> Fsrs {
 
 ///|
 /// 只改目标保持率的构造器，间隔会按它反解。
+///
+/// 有效范围是 **[0.5, 0.99]**——这不是本构造器的私有约定，而是
+/// `interval_days` 的数学边界：dr < 0.5 时 `dr^(1/-0.5) - 1` 的曲线
+/// 陡峭到间隔对参数几乎不敏感（0.3 与 0.5 差别小于一天），dr > 0.99
+/// 时间隔发散（0.999 的间隔约是 0.99 的 2.4 倍，0.9999 再翻倍）。
+/// 超界值**夹到边界而不是回退默认**：0.4 的用户意图明显是「更激进」，
+/// 夹到 0.5 保留了意图方向；回退到 0.9 则无端反转了它。
+/// NaN 视为无效，回退 0.9。
 pub fn Fsrs::with_retention(retention : Double) -> Fsrs {
-  let r = if retention <= 0.0 || retention >= 1.0 { 0.9 } else { retention }
+  let r = if retention.is_nan() || retention <= 0.0 || retention >= 1.0 {
+    0.9
+  } else if retention < 0.5 {
+    0.5
+  } else if retention > 0.99 {
+    0.99
+  } else {
+    retention
+  }
   { w: fsrs_default_w(), desired_retention: r, }
 }
 

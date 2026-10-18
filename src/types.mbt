@@ -160,7 +160,10 @@ pub fn add_days(now : Timestamp, days : Double) -> Timestamp {
 ///
 /// 字段含义（跨调度器共享的容器）：
 /// - `stability`   S：保持天数（FSRS 直接使用；SM-2/Leitner 存当前间隔的镜像）
-/// - `difficulty`  D：1..10（FSRS 直接使用；SM-2 借它保存 EF；Leitner 借它保存盒号）
+/// - `difficulty`  D：**含义按调度器分派**，同一字段三种用途——
+///   FSRS 是标准 D（1..10）；SM-2 借它保存 EF（下限 1.3，无 10 上限，
+///   实践中 <3，所以「难度 10.50」这类显示值是 EF 而非越界）；Leitner
+///   借它保存盒号（1..5）。跨调度器比较 difficulty 没有意义。
 /// - `reps`        累计成功复习次数
 /// - `lapses`      遗忘（答错）次数
 /// - `last_review` 上次复习时刻
@@ -170,7 +173,7 @@ pub fn add_days(now : Timestamp, days : Double) -> Timestamp {
 pub(all) struct CardState {
   card_id : String
   stability : Double // S：保持天数
-  difficulty : Double // D：1..10
+  difficulty : Double // 语义按调度器分派：FSRS=D(1..10) / SM-2=EF / Leitner=盒号
   reps : Int32 // 成功复习次数
   lapses : Int32 // 遗忘次数
   last_review : Timestamp

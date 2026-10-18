@@ -73,7 +73,10 @@ pub(all) struct SimConfig {
   desired_retention : Double
   /// 模拟用户行为：给定到期卡状态，返回评分
   grade_fn : (CardState) -> Grade
-  /// 伪随机种子（固定值保证可复现）
+  /// 评分策略的随机种子。**记录性字段**：种子实际是通过
+  /// `grade_policy_with_seed(name, seed)` 注入 `grade_fn` 闭包的，
+  /// `simulate_with` 不读取它——保留在配置里是为了完整回显与
+  /// 结果自描述。换种子请走策略工厂，而不是改这个字段。
   seed : Int64
 } derive(Debug)
 
