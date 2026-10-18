@@ -152,6 +152,30 @@ pub fn AnyScheduler::by_name(name : String) -> AnyScheduler {
 }
 
 ///|
+/// 按名字构造调度器，并把**目标保持率**透传给支持它的实现。
+///
+/// 这修复了一个真实缺陷（R1）：`--retention 0.70` 曾经被 CLI 读进
+/// `SimConfig.desired_retention` 后**无人读取**——调度器由 `by_name`
+/// 固定 0.9 构造，CLI 还把这个值打印成「目标保持率 0.70」，承诺了
+/// 一个不存在的旋钮。两次不同的 retention 跑出逐字节相同的输出。
+///
+/// 语义按实现分派：
+///   - **FSRS**：`desired_retention` 是算法的一等参数（间隔由它反解），
+///     直接用 `Fsrs::with_retention(r)`。
+///   - **SM-2 / Leitner**：没有保持率参数——这是算法的固有局限，
+///     不是缺陷。原样返回默认构造；CLI 会提示该值对此调度器无效。
+pub fn AnyScheduler::by_name_with_retention(
+  name : String,
+  retention : Double,
+) -> AnyScheduler {
+  match name {
+    "sm2" => Sm2(Sm2::new())
+    "fsrs" => Fsrs(Fsrs::with_retention(retention))
+    _ => Leitner(Leitner::new())
+  }
+}
+
+///|
 /// 名字是否是受支持的调度器名（供 CLI 做用法校验）。
 pub fn scheduler_name_valid(name : String) -> Bool {
   match name {

@@ -464,9 +464,11 @@ fn cmd_replay(args : Args) -> Int32 {
         sb.write_string(",")
       }
       first = false
-      sb.write_string("\"")
-      sb.write_string(cid)
-      sb.write_string("\":")
+      // R2 修复：card_id 直接拼接会产生非法 JSON —— id 含引号（a"b）时
+      // 输出 {"a"b":1.00}。用 core 的 Json::string 做正确转义，它产出的
+      // 字符串自带引号，直接作为键写入。
+      sb.write_string(Json::string(cid).stringify())
+      sb.write_string(":")
       sb.write_string(fmt_float(iv, 2))
     }
     sb.write_string("}}")
@@ -758,7 +760,21 @@ fn cmd_simulate(args : Args) -> Int32 {
     grade_fn: @lib.grade_policy_with_seed(policy, seed),
     seed,
   }
-  let s = @lib.AnyScheduler::by_name(sched_name)
+  // R1 修复：retention 现在真正传给调度器。SM-2/Leitner 没有这个参数
+  // （算法局限），此时如实告知而不是沉默地忽略。
+  let s = @lib.AnyScheduler::by_name_with_retention(
+    sched_name, target_retention,
+  )
+  if sched_name != "fsrs" && target_retention != 0.9 {
+    println(
+      "提示: " +
+      sched_name +
+      " 调度器没有目标保持率参数（算法局限），" +
+      "--retention " +
+      fmt_float(target_retention, 2) +
+      " 未生效（仅 FSRS 支持）",
+    )
+  }
   let res = @lib.simulate(s, cfg)
   println("模拟: " + s.name() + " / " + policy + " 策略")
   println(

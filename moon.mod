@@ -17,6 +17,3 @@ description = "Spaced-repetition scheduling engine: SM-2 and FSRS-style schedule
 import {
   "moonbitlang/x@0.5.5",
 }
-
-
-

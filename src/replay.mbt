@@ -106,6 +106,13 @@ pub fn replay(log : ReviewLog, s : AnyScheduler) -> ReplayResult {
 
 ///|
 /// 两个调度器在同一份日志上的对比结果。
+///
+/// `a_lapses` / `b_lapses` 是**调度器视角的间隔回退次数**（R4 修复）：
+/// 重放后某次复习把 interval 从 v 压回更小值（v > 1 且新值 <= 1）计一次。
+/// 旧实现数的是日志里的 Again 事件——那是**用户行为**，两个调度器读的
+/// 是同一份日志，所以两列恒等、差值恒 0，而 CLI 还把它推荐为「更可比的
+/// 指标」，纯属误导。注意这个指标依然偏向宽松的调度器（间隔本来就短，
+/// 更难触发回退），CLI 会说明这一点。
 pub(all) struct Comparison {
   a_name : String
   b_name : String
@@ -169,8 +176,47 @@ pub fn compare(
     b_name: b.name(),
     a_total_interval: total_interval(ra),
     b_total_interval: total_interval(rb),
-    a_lapses: ra.total_lapses,
-    b_lapses: rb.total_lapses,
+    a_lapses: scheduler_lapses(ra),
+    b_lapses: scheduler_lapses(rb),
     per_card,
   }
+}
+
+///|
+/// 调度器视角的间隔回退次数：一次复习后 interval 从 >1 天缩回 <=1 天。
+///
+/// 这是「这个调度器认为你忘了」的代理——SM-2 遗忘后 interval 归 1、
+/// FSRS 大幅缩短间隔。与日志里的 Again 次数（用户行为，与调度器无关）
+/// 是两回事。
+fn scheduler_lapses(res : ReplayResult) -> Int32 {
+  // 按 (card, 时间) 重放快照序列，观察 interval 的跳变
+  let by_card : Map[String, Array[(Int64, Double)]] = Map([])
+  for snap in res.snapshots {
+    let arr = match by_card.get(snap.1) {
+      Some(a) => a
+      None => {
+        let a : Array[(Int64, Double)] = []
+        by_card[snap.1] = a
+        a
+      }
+    }
+    arr.push((snap.0, snap.2.interval_days))
+  }
+  let mut lapses = 0
+  for cid in by_card.keys() {
+    let arr = match by_card.get(cid) {
+      Some(a) => a
+      None => continue
+    }
+    // snapshots 的推进顺序即复习顺序（replay 按时间处理）
+    let mut prev = -1.0
+    for pair in arr {
+      let cur = pair.1
+      if prev > 1.0 && cur <= 1.0 {
+        lapses = lapses + 1
+      }
+      prev = cur
+    }
+  }
+  lapses
 }

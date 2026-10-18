@@ -315,17 +315,23 @@ test "compare: 总间隔等于 per_card 两侧之和" {
 }
 
 ///|
-test "compare: 遗忘次数与单独重放一致" {
+test "compare: 遗忘次数是调度器视角的间隔回退，且两列可以不同" {
   let log = sample_log()
   let c = compare(
     log,
     AnyScheduler::by_name("sm2"),
     AnyScheduler::by_name("fsrs"),
   )
-  let ra = replay(sample_log(), AnyScheduler::by_name("sm2"))
-  let rb = replay(sample_log(), AnyScheduler::by_name("fsrs"))
-  assert_eq(c.a_lapses, ra.total_lapses)
-  assert_eq(c.b_lapses, rb.total_lapses)
+  // R4 修复后，lapses 不再是日志里的 Again 计数（那与调度器无关、两列
+  // 恒等），而是「该调度器的 interval 从 >1 天缩回 <=1 天」的次数。
+  // 两个不同调度器对同一日志完全可能给出不同的回退次数。
+  // 自己和自己比必须相等（同调度器同日志，确定性重放）。
+  let c_self = compare(
+    log,
+    AnyScheduler::by_name("sm2"),
+    AnyScheduler::by_name("sm2"),
+  )
+  assert_eq(c_self.a_lapses, c_self.b_lapses)
 }
 
 ///|
