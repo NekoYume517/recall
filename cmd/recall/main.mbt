@@ -983,6 +983,14 @@ fn cmd_curve(args : Args) -> Int32 {
     println("用法错误: --buckets 必须 >= 1")
     return 2
   }
+  // 上界 10000：retention_curve 会按桶数分配两个 Int 数组
+  //（Array::make(n_buckets, 0)），--buckets 2000000000 这类值会让
+  // wasm 分配直接 unreachable 崩溃（exit 1 + 栈回溯），而不是可读的
+  // 用法错误。真实曲线用不到上万桶，超出即视为误输入。
+  if buckets > 10000 {
+    println("用法错误: --buckets 必须 <= 10000，得到 \{buckets}")
+    return 2
+  }
   let log = match load_log(path) {
     Some(v) => v
     None => return 1
