@@ -233,6 +233,53 @@ fn sm2_state_at_floor(sched : Sm2) -> CardState {
   state
 }
 
+// ─────────────────────────────────────────────────────────────────
+// 外来 CardState 的防御性处理
+// ─────────────────────────────────────────────────────────────────
+
+///|
+/// 外来 CardState 的 difficulty < 1.3 时必须被夹到 1.3，
+/// 而不是静默换成本调度器自己的默认 EF（Sm2::new() 是 2.5）。
+///
+/// 场景：CardState 是 pub(all) 结构，任何调用方都能构造（或从旧版本
+/// 数据恢复出）difficulty=0.5 这类低于下限的状态。review 收到后：
+/// - 修复前：prev_ease 直接回退到 self.ease_factor=2.5 —— 一张难度
+///   顶格的卡凭空「舒展」成 2.5，下次间隔按 2.5 倍膨胀。
+/// - 修复后：prev_ease 夹到 sm2_min_ease()=1.3 —— 尊重"这张卡很难"
+///   的事实，间隔按 1.3 倍起步。
+/// Good 不改 EF，所以最终 difficulty 精确等于夹取值，断言可写成等值。
+test "外来低 EF 状态被夹到 1.3 而不是换回默认 2.5" {
+  let sched = Sm2::new()
+  let foreign = {
+    ..sched.init("c1", 0L),
+    difficulty: 0.5,
+    reps: 3,
+    interval_days: 20.0,
+  }
+  let out = sched.review(foreign, Grade::Good, 0L)
+  // 修复前这里是 2.5（回退默认 EF），修复后应为 1.3
+  assert_true(approx(out.difficulty, 1.3, 0.000000001))
+  // 间隔也应按夹取后的 1.3 算：round(20 * 1.3) = 26，
+  // 而不是按 2.5 的 round(20 * 2.5) = 50
+  assert_true(approx(out.interval_days, 26.0, 0.000000001))
+}
+
+///|
+/// 正常范围（>=1.3）的外来 EF 不受影响：2.4 会被原样使用。
+test "外来正常 EF 状态原样使用" {
+  let sched = Sm2::new()
+  let foreign = {
+    ..sched.init("c1", 0L),
+    difficulty: 2.4,
+    reps: 3,
+    interval_days: 20.0,
+  }
+  let out = sched.review(foreign, Grade::Good, 0L)
+  assert_true(approx(out.difficulty, 2.4, 0.000000001))
+  // round(20 * 2.4) = 48
+  assert_true(approx(out.interval_days, 48.0, 0.000000001))
+}
+
 ///|
 test "间隔随 reps 单调不减（Good 序列）" {
   let sched = Sm2::new()

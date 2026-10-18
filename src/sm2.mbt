@@ -168,8 +168,13 @@ pub impl Scheduler for Sm2 with fn init(self, card_id, now) {
 /// - `interval_days`  ↔ 当前间隔
 /// - `stability`      ↔ 间隔的镜像（给 stats/曲线画图用，不参与决策）
 pub impl Scheduler for Sm2 with fn review(self, state, grade, now) {
+  // 外来状态防御：difficulty 是 pub(all) 字段，调用方可能构造（或从
+  // 旧数据恢复出）低于下限的值。此时夹到 sm2_min_ease()——尊重"这张
+  // 卡 EF 很低"的事实按 1.3 继续，而不是回退 self.ease_factor（默认
+  // 实例是 2.5），那会让难卡凭空舒展、间隔虚假膨胀。
+  // 正常路径不受影响：调度器自己产出的状态 difficulty 恒 >= 1.3。
   let prev_ease = if state.difficulty < sm2_min_ease() {
-    self.ease_factor
+    sm2_min_ease()
   } else {
     state.difficulty
   }
