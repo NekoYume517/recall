@@ -81,7 +81,10 @@ pub(all) struct SimConfig {
 } derive(Debug)
 
 ///|
-/// 默认配置：90 天、每天 20 张、复习上限 200、realistic 策略。
+/// 默认配置：90 天、每天 20 张、复习上限 200、optimistic 策略（总是 Good）。
+///
+/// 注意与 CLI 的默认不同层：`cmd_simulate` 的 --policy 默认值是 realistic，
+/// 这里的 default 只是库层给出的最理想基线配置。
 pub fn SimConfig::default() -> SimConfig {
   {
     days: 90,
