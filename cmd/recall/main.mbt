@@ -72,18 +72,6 @@ fn Args::get_opt(self : Args, key : String) -> String? {
 }
 
 ///|
-fn Args::get_int(self : Args, key : String, fallback : Int32) -> Int32 {
-  match self.params.get(key) {
-    Some(v) =>
-      match parse_int_loose(v) {
-        Some(n) => n
-        None => fallback
-      }
-    None => fallback
-  }
-}
-
-///|
 
 ///|
 fn Args::has(self : Args, key : String) -> Bool {
@@ -965,7 +953,21 @@ fn cmd_curve(args : Args) -> Int32 {
     println("用法错误: curve 需要 --log FILE")
     return 2
   }
-  let buckets = args.get_int("buckets", 10)
+  // 数值参数区分「未提供」（用默认）与「提供了但不是数字」（用法错误），
+  // 与 --days / --new-per-day 等保持同一模式。
+  // 旧实现经 get_int 把非法值静默回退成默认 10 并 exit 0——
+  // 用户以为画的是自己要的桶数，实际不是。
+  let buckets = match args.get_opt("buckets") {
+    None => 10
+    Some(v) =>
+      match parse_int_loose(v) {
+        Some(n) => n
+        None => {
+          println("用法错误: --buckets 需要一个整数，得到 '\{v}'")
+          return 2
+        }
+      }
+  }
   if buckets < 1 {
     println("用法错误: --buckets 必须 >= 1")
     return 2
