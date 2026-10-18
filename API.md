@@ -17,7 +17,9 @@ pub(all) enum Grade {
 
 pub fn Grade::to_int(self : Grade) -> Int
 pub fn Grade::from_int(n : Int) -> Grade
-/// 学习理论里的"成功回忆"阈值：>= 3
+/// 学习理论里的"成功回忆"阈值：**非 Again 即成功**。
+/// 与 SM-2 的契约一致（q < 3 才算失败，Hard 的 q=3 是成功）；
+/// 全项目统一用这个谓词，"是否记住"只有这一个定义。
 pub fn Grade::is_pass(self : Grade) -> Bool
 
 /// 秒级时间戳（Unix epoch），避免浮点
