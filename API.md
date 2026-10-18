@@ -362,7 +362,7 @@ pub(all) struct CardStats {
 }
 
 pub fn compute_stats(log : ReviewLog) -> Array[CardStats]
-pub fn retention_curve(log : ReviewLog, buckets : Int) -> Array[(Double, Double]>
+pub fn retention_curve(log : ReviewLog, buckets : Int) -> Array[(Double, Double)]
   // (elapsed_days_bucket, retention_rate)
 ```
 
