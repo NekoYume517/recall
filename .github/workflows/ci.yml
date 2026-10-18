@@ -20,6 +20,12 @@ jobs:
       - name: Verify toolchain
         run: moon version
 
+      # Fresh runners start with an empty registry index. Without this,
+      # dependency resolution fails with 'module was not found in the
+      # registry' (the toolchain's own warning points here).
+      - name: Update registry index
+        run: moon update
+
       # Errors must be zero. Warnings are allowed: the codebase still carries
       # deprecation notices from impl ... with fn name(self) and from
       # derive(Eq) promotion, which are style-level and not defects.
