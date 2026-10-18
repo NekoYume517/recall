@@ -129,25 +129,28 @@ pub(all) struct SimResult {
 ///|
 /// 从 CardState 估「此刻」的可提取性。
 ///
-/// ⚠️ **这是本模拟器最容易写错的地方，值得说清楚**：
-///
-/// `grade_fn` 的签名是 `(CardState) -> Grade`（契约如此），它**拿不到
-/// 调度器实例**，也拿不到"现在是第几天"。因此我们无法直接调用
+/// `grade_fn` 的签名是 `(CardState) -> Grade`（契约如此），它拿不到
+/// 调度器实例，也拿不到"现在是第几天"，因此无法直接调用
 /// `Scheduler::retrievability(state, now)`——那是唯一精确的做法。
+/// 本函数只能用遗忘曲线近似：`R ≈ forgetting_curve(elapsed, stability)`。
 ///
-/// 唯一能从 `CardState` 读出的时间量是 `due`（下次到期时刻）。
-/// 一次复习发生在 `due` 附近时，"距上次复习的天数" 约等于
-/// `interval_days`，于是 `R ≈ forgetting_curve(interval_days, stability)`。
+/// **时间信号从哪来**：`elapsed` 读的是 `interval_days`，而这个字段
+/// 在 `simulate_with` 里有特殊约定——复习前会把状态副本里的
+/// `interval_days` 换成「真实已过天数」（now − last_review）再喂给
+/// 评分器（见 simulate_with 里的关键修正注释）。所以本函数看到的是
+/// 真实逾期程度，不是调度器的计划间隔：卡片被积压拖 30 天，这里算出
+/// 的 R 会真实跌破 0.9，积压会恶化记忆。
 ///
-/// **关键限制（必须在结论里说明）**：这个近似**看不见逾期**。
-/// 如果卡片积压了 30 天，真实 R 早已远低于 0.9，但这里仍算 0.9。
-/// 后果是「积压不会让记住率恶化」，因此模拟出的积压是**乐观下界**：
-/// 真实场景里积压会自我强化（越拖越忘 → 越多 Again → 间隔回退 → 更需要复习）。
-/// 想得到悲观上界，用 `pessimistic` 策略（成功概率再乘 0.7）。
+/// ⚠️ 契约：**只有 `simulate_with` 这条路径保证这层替换**。若绕过它、
+/// 直接拿调度器刚 review 出来的状态调策略，`interval_days` 就是计划
+/// 间隔，近似退化成"永远刚到点、记得很牢"——那是修复前的旧行为
+/// （背景见 docs/implementation.md 第 9 节）。
 ///
 /// 对 FSRS 这个近似相当准（它的间隔本就由 S 反解，R(I,S)=desired_retention）；
-/// 对 SM-2 / Leitner 由于 stability 只是 interval 的镜像，退化成一个常数，
-/// 此时策略等价于"固定成功率的伯努利抽样"——仍然可用，只是没有难度区分度。
+/// 对 SM-2 / Leitner，stability 只是计划间隔的镜像：到点时 R≈0.9、
+/// 逾期越久越低——能反映逾期，但没有难度区分度。
+///
+/// `stability <= 0`（新卡，还没建立记忆）直接返回 0.9：默认能答对。
 fn policy_retrievability(cs : CardState) -> Double {
   if cs.stability <= 0.0 {
     // 新卡（还没建立记忆）：默认能答对
