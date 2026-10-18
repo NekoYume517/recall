@@ -65,6 +65,13 @@ fn Args::get(self : Args, key : String, fallback : String) -> String {
 }
 
 ///|
+/// 参数存在性查询：None = 未提供，Some = 提供了（可能值不合法）。
+/// 数值参数需要区分这两种情况——前者用默认值，后者报用法错误。
+fn Args::get_opt(self : Args, key : String) -> String? {
+  self.params.get(key)
+}
+
+///|
 fn Args::get_int(self : Args, key : String, fallback : Int32) -> Int32 {
   match self.params.get(key) {
     Some(v) =>
@@ -77,16 +84,6 @@ fn Args::get_int(self : Args, key : String, fallback : Int32) -> Int32 {
 }
 
 ///|
-fn Args::get_double(self : Args, key : String, fallback : Double) -> Double {
-  match self.params.get(key) {
-    Some(v) =>
-      match parse_double_loose(v) {
-        Some(n) => n
-        None => fallback
-      }
-    None => fallback
-  }
-}
 
 ///|
 fn Args::has(self : Args, key : String) -> Bool {
@@ -741,13 +738,69 @@ fn cmd_simulate(args : Args) -> Int32 {
     )
     return 2
   }
-  let days = args.get_int("days", 90)
-  let new_per_day = args.get_int("new-per-day", 20)
-  let review_limit = args.get_int("review-limit", 200)
-  let target_retention = args.get_double("retention", 0.9)
-  let seed = match parse_int_loose(args.get("seed", "20240101")) {
-    Some(v) => v.to_int64()
+  // 数值参数区分「未提供」（用默认）与「提供了但不是数字」（用法错误）。
+  // 旧实现把 --days abc 静默当作 90 天跑完并 exit 0——用户以为模拟的是
+  // 自己要的时间窗口，实际不是。
+  let days = match args.get_opt("days") {
+    None => 90
+    Some(v) =>
+      match parse_int_loose(v) {
+        Some(n) => n
+        None => {
+          println("用法错误: --days 需要一个整数，得到 '\{v}'")
+          return 2
+        }
+      }
+  }
+  let new_per_day = match args.get_opt("new-per-day") {
+    None => 20
+    Some(v) =>
+      match parse_int_loose(v) {
+        Some(n) => n
+        None => {
+          println(
+            "用法错误: --new-per-day 需要一个整数，得到 '\{v}'",
+          )
+          return 2
+        }
+      }
+  }
+  let review_limit = match args.get_opt("review-limit") {
+    None => 200
+    Some(v) =>
+      match parse_int_loose(v) {
+        Some(n) => n
+        None => {
+          println(
+            "用法错误: --review-limit 需要一个整数，得到 '\{v}'",
+          )
+          return 2
+        }
+      }
+  }
+  let target_retention = match args.get_opt("retention") {
+    None => 0.9
+    Some(v) =>
+      match parse_double_loose(v) {
+        Some(n) => n
+        None => {
+          println(
+            "用法错误: --retention 需要一个小数，得到 '\{v}'",
+          )
+          return 2
+        }
+      }
+  }
+  let seed = match args.get_opt("seed") {
     None => 20240101L
+    Some(v) =>
+      match parse_int_loose(v) {
+        Some(n) => n.to_int64()
+        None => {
+          println("用法错误: --seed 需要一个整数，得到 '\{v}'")
+          return 2
+        }
+      }
   }
   if days < 0 {
     println("用法错误: --days 必须非负")
