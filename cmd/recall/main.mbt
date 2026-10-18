@@ -103,6 +103,11 @@ fn digit_of(c : UInt16) -> Int32 {
 
 ///|
 /// 解析整数。允许前导 +/−，不允许其它字符。
+///
+/// 累加用 Int64 承载，但结果必须落在 32 位有符号范围内才返回——
+/// 否则 `--days 4294967297` 会被 `.to_int()` 截断成 1、`--days 2^63`
+/// 被截断成 0，超长窗口静默当成短窗口跑完。越界返回 None，
+/// 由调用方走「用法错误 exit 2」路径。
 fn parse_int_loose(s : String) -> Int32? {
   let t = s.trim_space().to_owned()
   if t.length() == 0 {
@@ -126,12 +131,18 @@ fn parse_int_loose(s : String) -> Int32? {
       return None
     }
     acc = acc * 10L + dg.to_int64()
+    // 越界即失败：等收完全部数字再判断会被 Int32 截断吞掉错误
+    //（例：4294967297 截断后恰好等于 1，落回合法范围）。
+    if acc > 2147483648L {
+      return None
+    }
     i = i + 1
   }
-  if neg {
-    Some((-acc).to_int())
+  let signed = if neg { -acc } else { acc }
+  if signed < -2147483648L || signed > 2147483647L {
+    None
   } else {
-    Some(acc.to_int())
+    Some(signed.to_int())
   }
 }
 
