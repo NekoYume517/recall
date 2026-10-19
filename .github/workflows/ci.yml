@@ -13,8 +13,11 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install MoonBit
+        # Pinned: CI once pulled a newer toolchain that promoted advisory
+        # warnings to errors and broke a locally-green build. Bump this
+        # together with the local toolchain, never independently.
         run: |
-          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash -s -- 0.1.20261012
           echo "$HOME/.moon/bin" >> $GITHUB_PATH
 
       - name: Verify toolchain
