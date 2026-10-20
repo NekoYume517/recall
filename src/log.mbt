@@ -250,7 +250,10 @@ fn field_double(
       // 有限性校验：NaN 的 is_nan 为 true；Infinity 的 (n-n) 为 NaN。
       // 两者都判为非有限值拒绝，避免下游归桶时 Infinity 溢出、上界打印异常大值。
       if n.is_nan() || (n - n).is_nan() {
-        raise BadLine(line_no, "字段 \{key} 必须是有限数字，得到非有限值")
+        raise BadLine(
+          line_no,
+          "字段 \{key} 必须是有限数字，得到非有限值",
+        )
       } else {
         n
       }
