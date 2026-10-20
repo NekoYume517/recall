@@ -115,16 +115,34 @@ pub fn retention_curve(
   buckets : Int32,
 ) -> Array[(Double, Double)] {
   let n_buckets = if buckets < 1 { 1 } else { buckets }
-  // --- 1. 找最大 elapsed 与样本数 ---
+  // 间隔口径必须与 compute_stats 完全一致：优先用日志 elapsed_days，
+  // 缺失（=0）且非首次时按时间戳差回推。这样两个子命令对「同一个学习行为」
+  // 给出同一批样本，不再凭空丢样本。
+  // 临时把每个事件的有效间隔算出来，再找最大值与样本数。
   let mut max_elapsed = 0.0
   let mut sample_count = 0
+  // 第一遍：按与 compute_stats 同源的逻辑算有效间隔并求 max。
+  let mut prev_ts : Timestamp = 0L
+  let mut has_prev = false
   for ev in log.events {
-    if ev.elapsed_days > 0.0 {
-      if ev.elapsed_days > max_elapsed {
-        max_elapsed = ev.elapsed_days
+    // 与 compute_stats 同口径：elapsed>0 直接用日志值（首条也计入）；
+    // 否则（含 0）且非首次时才按时间戳差回推。首条事件没有前驱，elapsed=0
+    // 时本就没有「间隔」可言，跳过（与 compute_stats 一致：首次不计间隔）。
+    let iv = if ev.elapsed_days > 0.0 {
+      ev.elapsed_days
+    } else if has_prev {
+      days_between(prev_ts, ev.reviewed_at)
+    } else {
+      0.0
+    }
+    if ev.elapsed_days > 0.0 || has_prev {
+      if iv > max_elapsed {
+        max_elapsed = iv
       }
       sample_count = sample_count + 1
     }
+    prev_ts = ev.reviewed_at
+    has_prev = true
   }
   if sample_count == 0 || max_elapsed <= 0.0 {
     return []
@@ -134,23 +152,36 @@ pub fn retention_curve(
   let safe_width = if width <= 0.0 { 1.0 } else { width }
   let totals = Array::make(n_buckets, 0)
   let passes = Array::make(n_buckets, 0)
+  // 第二遍：用同样的有效间隔归桶。
+  let mut p_ts : Timestamp = 0L
+  let mut h_prev = false
   for ev in log.events {
-    if ev.elapsed_days <= 0.0 {
-      continue
+    // 与 compute_stats 同口径：elapsed>0 直接用日志值（首条也计入）；
+    // 否则（含 0）且非首次时才按时间戳差回推。
+    let iv = if ev.elapsed_days > 0.0 {
+      ev.elapsed_days
+    } else if h_prev {
+      days_between(p_ts, ev.reviewed_at)
+    } else {
+      0.0
     }
-    // 归桶：floor(elapsed / width)，封顶到最后一桶
-    // （elapsed == max_elapsed 时除法得 n_buckets，必须夹回来）
-    let mut bi = (ev.elapsed_days / safe_width).to_int()
-    if bi < 0 {
-      bi = 0
+    if ev.elapsed_days > 0.0 || h_prev {
+      // 归桶：floor(iv / width)，封顶到最后一桶
+      // （iv == max_elapsed 时除法得 n_buckets，必须夹回来）
+      let mut bi = (iv / safe_width).to_int()
+      if bi < 0 {
+        bi = 0
+      }
+      if bi >= n_buckets {
+        bi = n_buckets - 1
+      }
+      totals[bi] = totals[bi] + 1
+      if is_recalled(ev.grade) {
+        passes[bi] = passes[bi] + 1
+      }
     }
-    if bi >= n_buckets {
-      bi = n_buckets - 1
-    }
-    totals[bi] = totals[bi] + 1
-    if is_recalled(ev.grade) {
-      passes[bi] = passes[bi] + 1
-    }
+    p_ts = ev.reviewed_at
+    h_prev = true
   }
   // --- 3. 组装非空桶 ---
   let out : Array[(Double, Double)] = []

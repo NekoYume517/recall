@@ -343,3 +343,44 @@ test "curve: 单调性在真实示例日志上也成立" {
     prev = row.1
   }
 }
+
+///|
+// 回归：retention_curve 与 compute_stats 必须对同一批样本口径一致。
+// 旧实现里 curve 只收 elapsed_days > 0 的样本，而 compute_stats 对 elapsed=0
+// 但时间戳差非零的事件按时间戳回推计入 —— 同份日志两者样本集合不同。
+// 这里构造 5 个 elapsed=0（时间戳等距 1 天）的样本 + 1 个 elapsed=1，断言
+// curve 仍把它们算进曲线（不应凭空丢掉）。
+test "curve: elapsed=0 但时间戳差非零的样本不被静默丢弃" {
+  let log = ReviewLog::new()
+  log.push(ReviewEvent::new("a", 0L, 0L, Good, 0.0))
+  // 5 个时间戳等距 1 天的事件，elapsed 全 0 —— 旧实现会全部丢弃，curve 只吐 1 桶。
+  // 修复后按时间戳回推，间隔都是 1 天，全进末桶，但至少不应「消失」为 0 样本。
+  for k = 1; k <= 5; k = k + 1 {
+    log.push(ReviewEvent::new("a", 86400L * k.to_int64(), 0L, Good, 0.0))
+  }
+  let c = retention_curve(log, 3)
+  // 5 个间隔为 1 天的样本都进入曲线（不为空）
+  assert_true(c.length() >= 1)
+  // 末桶包含所有 5 个样本，保持率应为 1.0
+  assert_true(near(c[c.length() - 1].1, 1.0))
+}
+
+///|
+// 回归：retention_curve 对完全成功但 elapsed=0 的样本，应与 compute_stats 一致
+// 地按时间戳回推真实间隔（而不是丢弃）。对照 compute_stats 的 mean_interval 口径。
+test "curve: 与 compute_stats 同口径（elapsed=0 时间戳回推）" {
+  let log = ReviewLog::new()
+  log.push(ReviewEvent::new("a", 0L, 0L, Good, 0.0))
+  for k = 1; k <= 5; k = k + 1 {
+    log.push(ReviewEvent::new("a", 86400L * k.to_int64(), 0L, Good, 0.0))
+  }
+  let rows = compute_stats(log)
+  // compute_stats 拿到 5 个间隔（均 1 天），全部 <= 1 天
+  assert_true(near(rows[0].mean_interval, 1.0))
+  // curve 也应收到这 5 个样本（按时间戳回推），且保持率与 stats 一致为 1.0
+  let c = retention_curve(log, 3)
+  assert_true(c.length() >= 1)
+  assert_true(near(c[c.length() - 1].1, 1.0))
+  // 与 compute_stats 的保持率一致：全部成功 → 1.0
+  assert_true(near(rows[0].retention_rate, 1.0))
+}

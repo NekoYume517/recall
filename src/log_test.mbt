@@ -495,3 +495,26 @@ test "归一化只影响 grade 字段，其余字段逐字节不变" {
   let expected = original.replace_all(old="\"grade\":4", new="\"grade\":5")
   inspect(normalized, content=expected)
 }
+
+///|
+// 回归：elapsed_days 的非有限值（Infinity / NaN）必须被拒绝，不能静默进入统计。
+// 旧实现 field_double 直接返回 JSON Number，下游归桶时 Infinity 会溢出、上界打印成
+// 异常大值。grade 的非整数（如 4）是特性不是 bug，无需校验；只校验 elapsed 有限性。
+test "JSONL: elapsed_days 为 Infinity/NaN 被拒绝" {
+  let inf = "{\"card_id\":\"a\",\"reviewed_at\":1700000000,\"due_at\":1699999940,\"grade\":3,\"elapsed_days\":1e400}\n"
+  let nan = "{\"card_id\":\"a\",\"reviewed_at\":1700000000,\"due_at\":1699999940,\"grade\":3,\"elapsed_days\":NaN}\n"
+  let bad_inf = ReviewLog::from_jsonl(inf)
+  let bad_nan = ReviewLog::from_jsonl(nan)
+  assert_true(bad_inf is Err(_))
+  assert_true(bad_nan is Err(_))
+}
+
+///|
+// 回归：elapsed_days 负数被夹成 0（与 ReviewEvent::new 一致），不拒绝。
+test "JSONL: elapsed_days 负数夹成 0" {
+  let neg = "{\"card_id\":\"a\",\"reviewed_at\":1700000000,\"due_at\":1699999940,\"grade\":3,\"elapsed_days\":-2}\n"
+  match ReviewLog::from_jsonl(neg) {
+    Ok(log) => assert_true(log.events[0].elapsed_days == 0.0)
+    Err(_) => assert_true(false)
+  }
+}

@@ -236,13 +236,24 @@ fn field_timestamp(
 
 ///|
 /// 从 JSON 值里取浮点字段（`elapsed_days`）。
+///
+/// 校验有限性：Infinity / NaN 的 `elapsed_days` 会让下游归桶溢出、保持率上界
+/// 打印成异常大值，必须拒绝而不是静默进入统计。（`grade` 的非整数由调用方
+/// 经 `Grade::from_int` 归一化，属于特性；这里只管 `elapsed_days` 的有限性。）
 fn field_double(
   obj : Map[String, Json],
   key : String,
   line_no : Int32,
 ) -> Double raise LogError {
   match obj.get(key) {
-    Some(Number(n, ..)) => n
+    Some(Number(n, ..)) =>
+      // 有限性校验：NaN 的 is_nan 为 true；Infinity 的 (n-n) 为 NaN。
+      // 两者都判为非有限值拒绝，避免下游归桶时 Infinity 溢出、上界打印异常大值。
+      if n.is_nan() || (n - n).is_nan() {
+        raise BadLine(line_no, "字段 \{key} 必须是有限数字，得到非有限值")
+      } else {
+        n
+      }
     Some(_) => raise BadLine(line_no, "字段 \{key} 不是数字")
     None => raise BadLine(line_no, "缺少字段 \{key}")
   }
