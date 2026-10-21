@@ -6,9 +6,8 @@
 //   1. `compute_stats`：每张卡的复习画像（次数、遗忘、间隔、保持率）
 //   2. `retention_curve`：把 elapsed_days 分桶后的保持率曲线
 //
-// `retention_curve` 是整个项目的**合理性检验点**：
-// 间隔越长，遗忘越多，因此保持率必须随 elapsed 单调下降。
-// 这条属性写成了测试，任何公式写错都会在这里暴露。
+// `retention_curve` 展示经验保持率。有限样本的桶值可以回升，
+// 不能把理论遗忘曲线的单调性强加给观测数据。
 //
 // 「是否成功回忆」统一用 `types.mbt` 的 `is_recalled(g) = g != Again`
 // （API.md 第 3.1 节：答错判定用 `q < 3`，即只有 Again 算答错）。
@@ -22,13 +21,25 @@ pub(all) struct CardStats {
   reviews : Int32
   /// 遗忘次数（判为 Again 的次数）
   lapses : Int32
-  /// 平均间隔天数（只统计"有上一次复习"的样本，首次不计）
+  /// 平均间隔天数（日志明确记录的正间隔，或同卡前驱推导出的间隔）
   mean_interval : Double
   /// 最大间隔天数
   max_interval : Double
   /// 保持率 = 成功复习 / 总复习，范围 [0,1]
   retention_rate : Double
 } derive(Debug)
+
+///|
+/// 全项目统计共用的间隔口径。日志开始可能晚于卡片首次学习，
+/// 所以首条事件的显式正间隔有效；否则只能从同卡前驱回推。
+/// 同一时刻的重复复习返回 Some(0)，与没有前驱的 None 区分。
+fn review_interval(ev : ReviewEvent, previous : Timestamp?) -> Double? {
+  if ev.elapsed_days > 0.0 {
+    Some(ev.elapsed_days)
+  } else {
+    previous.map(fn(ts) { days_between(ts, ev.reviewed_at) })
+  }
+}
 
 ///|
 /// 计算每张卡的统计。返回按 card_id 升序排列的数组，保证可复现。
@@ -50,8 +61,8 @@ pub fn compute_stats(log : ReviewLog) -> Array[CardStats] {
     let mut passes = 0
     let mut interval_sum = 0.0
     let mut interval_max = 0.0
-    let mut prev_ts : Timestamp = 0L
-    let mut has_prev = false
+    let mut previous : Timestamp? = None
+    let mut samples = 0
     for ev in events {
       reviews = reviews + 1
       if ev.grade == Again {
@@ -60,26 +71,18 @@ pub fn compute_stats(log : ReviewLog) -> Array[CardStats] {
       if is_recalled(ev.grade) {
         passes = passes + 1
       }
-      // 间隔：优先用日志里的 elapsed_days（当时真实测量值）；
-      // 缺失（=0）且非首次时按时间戳差回推。
-      let iv = if ev.elapsed_days > 0.0 {
-        ev.elapsed_days
-      } else if has_prev {
-        days_between(prev_ts, ev.reviewed_at)
-      } else {
-        0.0
-      }
-      if has_prev {
-        interval_sum = interval_sum + iv
-        if iv > interval_max {
-          interval_max = iv
+      match review_interval(ev, previous) {
+        Some(iv) => {
+          samples = samples + 1
+          interval_sum = interval_sum + iv
+          if iv > interval_max {
+            interval_max = iv
+          }
         }
+        None => ()
       }
-      prev_ts = ev.reviewed_at
-      has_prev = true
+      previous = Some(ev.reviewed_at)
     }
-    // 首次复习没有"间隔"，所以分母是 reviews - 1
-    let samples = if reviews > 1 { reviews - 1 } else { 0 }
     out.push({
       card_id: cid,
       reviews,
@@ -105,83 +108,73 @@ pub fn compute_stats(log : ReviewLog) -> Array[CardStats] {
 /// 每桶返回 `(桶上界天数, 该桶的保持率)`。
 ///
 /// 设计细节：
-/// - **首次复习（elapsed_days = 0）不参与**：没有间隔就没有"保持"可言。
+/// - 同卡无前驱且 elapsed_days=0 的事件不参与；显式正间隔仍有效。
+/// - 重复复习的零间隔参与统计；全部间隔为零时返回上界为 0 的一个桶。
 /// - 桶宽 = 最大 elapsed / buckets，让最后一桶恰好覆盖最大值。
 /// - 只返回**非空桶**，按桶上界升序——空桶画不出曲线，掺进去只会误导。
 ///
-/// 理论保证：保持率随桶上界上升而**单调不增**。这是测试的核心断言。
+/// 这是观测保持率，有限样本不保证单调性。
 pub fn retention_curve(
   log : ReviewLog,
   buckets : Int32,
 ) -> Array[(Double, Double)] {
   let n_buckets = if buckets < 1 { 1 } else { buckets }
-  // 间隔口径必须与 compute_stats 完全一致：优先用日志 elapsed_days，
-  // 缺失（=0）且非首次时按时间戳差回推。这样两个子命令对「同一个学习行为」
-  // 给出同一批样本，不再凭空丢样本。
-  // 临时把每个事件的有效间隔算出来，再找最大值与样本数。
-  let mut max_elapsed = 0.0
-  let mut sample_count = 0
-  // 第一遍：按与 compute_stats 同源的逻辑算有效间隔并求 max。
-  let mut prev_ts : Timestamp = 0L
-  let mut has_prev = false
-  for ev in log.events {
-    // 与 compute_stats 同口径：elapsed>0 直接用日志值（首条也计入）；
-    // 否则（含 0）且非首次时才按时间戳差回推。首条事件没有前驱，elapsed=0
-    // 时本就没有「间隔」可言，跳过（与 compute_stats 一致：首次不计间隔）。
-    let iv = if ev.elapsed_days > 0.0 {
-      ev.elapsed_days
-    } else if has_prev {
-      days_between(prev_ts, ev.reviewed_at)
-    } else {
-      0.0
-    }
-    if ev.elapsed_days > 0.0 || has_prev {
-      if iv > max_elapsed {
-        max_elapsed = iv
-      }
-      sample_count = sample_count + 1
-    }
-    prev_ts = ev.reviewed_at
-    has_prev = true
+  // 先按卡片和时间提取一次样本，分桶时不再重复推导前驱。
+  let samples : Array[(Double, Grade)] = []
+  let grouped = log.by_card()
+  let ids : Array[String] = []
+  for cid in grouped.keys() {
+    ids.push(cid)
   }
-  if sample_count == 0 || max_elapsed <= 0.0 {
+  ids.sort()
+  let mut max_elapsed = 0.0
+  for cid in ids {
+    let events = grouped[cid]
+    let mut previous : Timestamp? = None
+    for ev in events {
+      match review_interval(ev, previous) {
+        Some(iv) => {
+          samples.push((iv, ev.grade))
+          if iv > max_elapsed {
+            max_elapsed = iv
+          }
+        }
+        None => ()
+      }
+      previous = Some(ev.reviewed_at)
+    }
+  }
+  if samples.length() == 0 {
     return []
+  }
+  if max_elapsed == 0.0 {
+    let mut successes = 0
+    for (_, grade) in samples {
+      if is_recalled(grade) {
+        successes = successes + 1
+      }
+    }
+    return [(0.0, successes.to_double() / samples.length().to_double())]
   }
   // --- 2. 定桶宽 ---
   let width = max_elapsed / n_buckets.to_double()
   let safe_width = if width <= 0.0 { 1.0 } else { width }
   let totals = Array::make(n_buckets, 0)
   let passes = Array::make(n_buckets, 0)
-  // 第二遍：用同样的有效间隔归桶。
-  let mut p_ts : Timestamp = 0L
-  let mut h_prev = false
-  for ev in log.events {
-    // 与 compute_stats 同口径：elapsed>0 直接用日志值（首条也计入）；
-    // 否则（含 0）且非首次时才按时间戳差回推。
-    let iv = if ev.elapsed_days > 0.0 {
-      ev.elapsed_days
-    } else if h_prev {
-      days_between(p_ts, ev.reviewed_at)
-    } else {
-      0.0
+  for (iv, grade) in samples {
+    // 归桶：floor(iv / width)，封顶到最后一桶
+    // （iv == max_elapsed 时除法得 n_buckets，必须夹回来）
+    let mut bi = (iv / safe_width).to_int()
+    if bi < 0 {
+      bi = 0
     }
-    if ev.elapsed_days > 0.0 || h_prev {
-      // 归桶：floor(iv / width)，封顶到最后一桶
-      // （iv == max_elapsed 时除法得 n_buckets，必须夹回来）
-      let mut bi = (iv / safe_width).to_int()
-      if bi < 0 {
-        bi = 0
-      }
-      if bi >= n_buckets {
-        bi = n_buckets - 1
-      }
-      totals[bi] = totals[bi] + 1
-      if is_recalled(ev.grade) {
-        passes[bi] = passes[bi] + 1
-      }
+    if bi >= n_buckets {
+      bi = n_buckets - 1
     }
-    p_ts = ev.reviewed_at
-    h_prev = true
+    totals[bi] = totals[bi] + 1
+    if is_recalled(grade) {
+      passes[bi] = passes[bi] + 1
+    }
   }
   // --- 3. 组装非空桶 ---
   let out : Array[(Double, Double)] = []
@@ -218,7 +211,7 @@ pub fn overall_stats(rows : Array[CardStats]) -> OverallStats {
   for r in rows {
     reviews = reviews + r.reviews
     lapses = lapses + r.lapses
-    if r.reviews > 1 {
+    if r.reviews > 1 || r.mean_interval > 0.0 {
       interval_sum = interval_sum + r.mean_interval
       interval_n = interval_n + 1
     }

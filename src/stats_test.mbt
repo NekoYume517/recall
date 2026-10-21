@@ -1,7 +1,6 @@
 // recall — 统计测试（白盒）
 //
-// 核心属性：`retention_curve` 必须随 elapsed 单调不增。
-// 这是整套实现的合理性检验点——任何公式写错都会在这里暴露。
+// 核心属性：统计使用同卡前驱，且保持观测保持率，不人为强制单调。
 
 // ---------------------------------------------------------------------------
 // compute_stats
@@ -223,7 +222,7 @@ fn monotone_log() -> ReviewLog {
 }
 
 ///|
-test "curve: 保持率随间隔单调不增（核心属性）" {
+test "curve: 单调构造样本保留其下降趋势" {
   let c = retention_curve(monotone_log(), 10)
   assert_true(c.length() >= 3)
   let mut prev = 1.1

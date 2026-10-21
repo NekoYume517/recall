@@ -467,7 +467,11 @@ pub fn retention_curve(log : ReviewLog, buckets : Int) -> Array[(Double, Double)
   // (elapsed_days_bucket, retention_rate)
 ```
 
-`retention_curve` 是验证实现是否合理的**关键测试点**：理论曲线应随 elapsed 增加而单调下降。
+`compute_stats` 与 `retention_curve` 按卡片分组并稳定按复习时间排序，
+共用同一个间隔口径：优先采用日志明确记录的正 `elapsed_days`，否则仅由同卡
+前驱回推。首条事件的正间隔可代表截断日志中的既有学习历史；首条零间隔
+没有前驱，不计入间隔样本。同刻重复复习的零间隔有效，全部样本为零时曲线
+返回一个上界为 0 的桶。经验保持率受有限样本影响，不保证单调。
 
 ## 7. CLI `cmd/recall/main.mbt`
 
@@ -490,7 +494,7 @@ recall curve    --log <file.jsonl> --buckets 10
   - 同一卡片，Good 的间隔 ≥ Hard 的间隔
   - 间隔随 reps 单调不减
   - EF 永不低于 1.3
-  - retention_curve 单调递减
+  - retention_curve 不受跨卡交错与文件行序影响，保持率在 [0,1]
 - 重放确定性：同一日志跑两次结果完全一致
 - JSONL 往返
 - 模拟：new_per_day=0 时 backlog 单调不增
