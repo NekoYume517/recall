@@ -95,6 +95,31 @@ fn anki_columns() -> Array[String] {
 }
 
 ///|
+/// Anki 文本导入使用 CSV 引号规则，即便分隔符为 Tab：字段包含
+/// 分隔符、换行或引号时包双引号，内部双引号翻倍。
+/// 行首 # 会被识别为注释，所以这类 ID 也必须引用。
+fn anki_escape_field(s : String) -> String {
+  let needs_quotes = s.has_prefix("#") ||
+    s.contains("\t") ||
+    s.contains("\r") ||
+    s.contains("\n") ||
+    s.contains("\"")
+  if !needs_quotes {
+    return s
+  }
+  let sb = StringBuilder()
+  sb.write_char('"')
+  for c in s.to_array() {
+    if c == '"' {
+      sb.write_char('"')
+    }
+    sb.write_char(c)
+  }
+  sb.write_char('"')
+  sb.to_string()
+}
+
+///|
 /// 单张卡状态 → 一行 TSV。
 fn card_to_tsv_line(st : CardState, scheduler_name : String) -> String {
   // difficulty 语义按调度器分派（见 types.mbt 的说明），列头带调度器名
@@ -113,7 +138,9 @@ fn card_to_tsv_line(st : CardState, scheduler_name : String) -> String {
     timestamp_to_iso8601(st.due),
     st.interval_days.to_string(),
     st.phase.label(),
-  ].join("\t")
+  ]
+  .map(anki_escape_field)
+  .join("\t")
 }
 
 ///|
