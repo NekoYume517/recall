@@ -272,7 +272,8 @@ pub impl Scheduler for Fsrs
       D' 与 S' 从同一份旧状态独立计算，新 D 仅保存到输出状态。
 
 遗忘后的稳定性：
-  S' = w[11] * D^(-w[12]) * ((S+1)^w[13] - 1) * exp(w[14] * (1 - R))
+  raw = w[11] * D^(-w[12]) * ((S+1)^w[13] - 1) * exp(w[14] * (1 - R))
+  S' = max(0.1, min(raw, S))   // 合法旧 S>=0.1 时，遗忘不会增加稳定性
 
 下次间隔：
   I = S / FACTOR * (desired_retention^(1/DECAY) - 1)

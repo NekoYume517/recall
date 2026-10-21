@@ -226,7 +226,8 @@ pub fn stability_after_success(
 ///|
 /// 遗忘后的稳定性（rating == 1，即 Again）：
 ///
-///   S' = w[11] · D^(-w[12]) · ((S+1)^w[13] - 1) · exp(w[14] · (1 - R))
+///   raw = w[11] · D^(-w[12]) · ((S+1)^w[13] - 1) · exp(w[14] · (1 - R))
+///   S' = max(0.1, min(raw, S))
 ///
 /// 逐项含义：
 /// - `w[11]`：遗忘后稳定性基准（≈ 1.94）
@@ -249,6 +250,13 @@ pub fn stability_after_lapse(
   let next = base * difficulty_term * stability_term * retrievability_term
   if next < 0.1 {
     0.1
+  } else if next > s {
+    // 遗忘不能提高已有稳定性。非法外来 S<0.1 仍遵守数值下限。
+    if s < 0.1 {
+      0.1
+    } else {
+      s
+    }
   } else {
     next
   }
