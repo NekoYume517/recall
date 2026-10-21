@@ -330,6 +330,14 @@ pub fn step(
   let r = forgetting_curve(elapsed_days, s)
   // 2. 先更新难度（D 的更新本身不依赖 R）
   let d_next = next_difficulty(w, d, rating)
+  // FSRS-5 的短期更新适用于距上次复习不足一天的重复评分。
+  // 时间戳按真实流逝天数计算；负间隔沿用“刚复习”的处理方式。
+  // 参考：fsrs4anki v5.3.0 next_short_term_stability（不含 UI 舍入/fuzz）。
+  if elapsed_days < 1.0 {
+    let raw = s * @math.exp(w[17] * (rating.to_double() - 3.0 + w[18]))
+    let s_next = if raw < 0.1 { 0.1 } else { raw }
+    return (s_next, d_next, interval_days(s_next, desired_retention))
+  }
   // 3. 再用**新难度**算稳定性（官方顺序）
   let s_next = if rating == 1 {
     stability_after_lapse(w, d_next, s, r)
