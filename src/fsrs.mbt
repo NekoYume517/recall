@@ -308,10 +308,9 @@ pub fn interval_days(s : Double, desired_retention : Double) -> Double {
 /// `elapsed_days` 由调用方按 `state.last_review` 与 `now` 算出。
 /// `is_first` 为真时走初始公式（不查遗忘曲线）。
 ///
-/// ⚠️ **顺序很关键**：官方 FSRS 是「先更新 D，再用**新 D** 算 S」。
-/// 用旧 D 会系统性低估稳定性增长（Good×5 时第 5 次开始差 1 天）。
-/// 但请注意：R 仍然用**旧 S** 与 elapsed 计算——R 描述的是"这一刻的状态"，
-/// 不能被接下来要算的新 S 污染。
+/// D' 与 S' 都从复习前的状态计算：稳定性使用旧 D，R 使用旧 S。
+/// 参考：fsrs4anki v5.3.0 review 分支将 last_d 传给稳定性更新；
+/// 新 D 只作为返回状态保存，不反馈进同一次 S' 计算。
 pub fn step(
   w : Array[Double],
   desired_retention : Double,
@@ -328,7 +327,7 @@ pub fn step(
   }
   // 1. 当前可提取性：用旧 S 与 elapsed（此刻的真实状态）
   let r = forgetting_curve(elapsed_days, s)
-  // 2. 先更新难度（D 的更新本身不依赖 R）
+  // 2. 更新难度；稳定性仍使用复习前的 d。
   let d_next = next_difficulty(w, d, rating)
   // FSRS-5 的短期更新适用于距上次复习不足一天的重复评分。
   // 时间戳按真实流逝天数计算；负间隔沿用“刚复习”的处理方式。
@@ -338,11 +337,11 @@ pub fn step(
     let s_next = if raw < 0.1 { 0.1 } else { raw }
     return (s_next, d_next, interval_days(s_next, desired_retention))
   }
-  // 3. 再用**新难度**算稳定性（官方顺序）
+  // 3. 用旧难度计算长期稳定性，与官方状态转移一致。
   let s_next = if rating == 1 {
-    stability_after_lapse(w, d_next, s, r)
+    stability_after_lapse(w, d, s, r)
   } else {
-    stability_after_success(w, d_next, s, r, rating)
+    stability_after_success(w, d, s, r, rating)
   }
   (s_next, d_next, interval_days(s_next, desired_retention))
 }

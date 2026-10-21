@@ -40,7 +40,7 @@ moon run cmd/recall -- simulate --scheduler fsrs --days 90 --new-per-day 20 --re
 预期：
 
 ```
-总复习次数: 7735
+总复习次数: 7724
 最大积压:   0 张
 最终积压:   0 张
 ```
@@ -53,8 +53,8 @@ moon run cmd/recall -- simulate --scheduler fsrs --days 90 --new-per-day 20 --re
 预期：
 
 ```
-最终积压:   1337 张
-→ 90 天后仍有 1337 张卡在排队等待复习
+最终积压:   1290 张
+→ 90 天后仍有 1290 张卡在排队等待复习
 ```
 
 **这是可操作的结论**：每天 20 张新卡时，复习上限不能低于某个值，否则三个月后积压是新增量的 66 倍。
@@ -78,9 +78,9 @@ moon run cmd/recall -- compare --log examples/reviews.jsonl --a sm2 --b fsrs
 ```
 指标                                sm2           fsrs             差值
 --------------------------------------------------------------------
-最终间隔总和(天)                    174058.0        13995.0      -160063.0
+最终间隔总和(天)                    174058.0        13380.0      -160678.0
 遗忘次数                               70              7            -63
-平均间隔(天)                        6962.3          559.8        -6402.5
+平均间隔(天)                        6962.3          535.2        -6427.1
 触及上限(100年)卡数                     4              0             -4
 ```
 
@@ -89,7 +89,7 @@ moon run cmd/recall -- compare --log examples/reviews.jsonl --a sm2 --b fsrs
 是 70、FSRS（缩短间隔）是 7。日志里 Again 的出现次数与调度器无关，两列恒等，
 列在这里只会给出恒为 0 的差值。
 
-**注意 `触及上限卡数` 这一行**。SM-2 的间隔是纯几何增长，25 张卡里有 4 张顶到 100 年上限——这在现实中等同于「永远不再复习」，等价于遗忘。所以「SM-2 的总间隔是 FSRS 的 12 倍」**不能**读成 SM-2 更好。CLI 会主动打印这段警告。
+**注意 `触及上限卡数` 这一行**。SM-2 的间隔是纯几何增长，25 张卡里有 4 张顶到 100 年上限——这在现实中等同于「永远不再复习」，等价于遗忘。所以「SM-2 的总间隔约为 FSRS 的 13 倍」**不能**读成 SM-2 更好。CLI 会主动打印这段警告。
 
 逐卡对比更能说明问题（数字来自 `compare` 的逐卡表，可复现）：同一张卡在两个调度器下的最终间隔差异悬殊——连续成功的卡 SM-2 的间隔远大于 FSRS（几何增长顶到上限），而有 Again 历史的卡 FSRS 的间隔更短、区分度更高。这正是 FSRS 相对 SM-2 的设计意图：间隔应当跟随**实际表现**，而不是按固定比率膨胀。
 
@@ -195,7 +195,7 @@ moon run cmd/recall -- replay --log examples/reviews.jsonl --scheduler bogus
 | 文件 | 覆盖内容 |
 |---|---|
 | `src/sm2_test.mbt` | 四组手算表、EF 下限 1.3、连续 20 次 Again 不击穿 |
-| `src/fsrs_test.mbt` | `R(t=S)=0.9`、`I(S,0.9)=S`、linear damping 饱和、新 D 顺序 |
+| `src/fsrs_test.mbt` | `R(t=S)=0.9`、`I(S,0.9)=S`、linear damping 饱和、旧 D 状态转移 |
 | `src/log_test.mbt` | JSONL 往返、grade 归一化幂等性 |
 | `src/replay_test.mbt` | 重放确定性、跨调度器对比 |
 | `src/simulate_test.mbt` | 模拟确定性、积压恶化记忆、无积压时不反向伤害 |

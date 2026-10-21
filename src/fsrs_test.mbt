@@ -350,50 +350,44 @@ test "fsrs: linear damping —— Easy 方向同样被阻尼" {
 }
 
 // ---------------------------------------------------------------------------
-// 更新顺序：先 D 后 S（回归测试）
+// 状态转移：D' 与 S' 均使用复习前状态（回归测试）
 // ---------------------------------------------------------------------------
 
 ///|
-test "fsrs: 成功路径使用新 D 而非旧 D（顺序不变量）" {
-  // 手工按「新 D」算一遍，必须与 step() 完全一致。
-  // 若实现退回「旧 D」，这里的数值会对不上。
+test "fsrs: 成功路径使用旧 D（官方状态转移）" {
   let w = fsrs_default_w()
   let old_d = 5.0
   let s = 10.0
   let elapsed = 3.0
   let r = forgetting_curve(elapsed, s)
   let d_new = next_difficulty(w, old_d, 3)
-  let s_expect = stability_after_success(w, d_new, s, r, 3)
-  let s_old_d = stability_after_success(w, old_d, s, r, 3)
+  let s_expect = stability_after_success(w, old_d, s, r, 3)
+  let s_new_d = stability_after_success(w, d_new, s, r, 3)
   let (s_got, d_got, _iv) = step(w, 0.9, old_d, s, elapsed, 3, false)
-  // 必须匹配「新 D」版本
+  // 与官方 last_d 路径一致，同时返回单独更新的新难度。
   assert_true(near(s_got, s_expect))
   assert_true(near(d_got, d_new))
-  // 且必须**不**等于「旧 D」版本（否则说明没改）
-  assert_true(!near(s_got, s_old_d))
-  // 新 D > 旧 D 时（这里 D 从 5 略降），新 D 版本增益更大
-  assert_true(s_got > s_old_d)
+  assert_true(!near(s_got, s_new_d))
 }
 
 ///|
-test "fsrs: 遗忘路径也使用新 D" {
+test "fsrs: 遗忘路径也使用旧 D" {
   let w = fsrs_default_w()
   let old_d = 5.0
   let s = 20.0
   let elapsed = 10.0
   let r = forgetting_curve(elapsed, s)
   let d_new = next_difficulty(w, old_d, 1)
-  let s_expect = stability_after_lapse(w, d_new, s, r)
-  let s_old_d = stability_after_lapse(w, old_d, s, r)
+  let s_expect = stability_after_lapse(w, old_d, s, r)
+  let s_new_d = stability_after_lapse(w, d_new, s, r)
   let (s_got, _d, _iv) = step(w, 0.9, old_d, s, elapsed, 1, false)
   assert_true(near(s_got, s_expect))
-  assert_true(!near(s_got, s_old_d))
+  assert_true(!near(s_got, s_new_d))
 }
 
 ///|
-test "fsrs: Good ×5 的间隔序列（含新 D 与阻尼）" {
-  // 回归：3 → 11 → 35 → 101 → 270
-  // 若退回旧 D，第 5 次会是 269 而不是 270
+test "fsrs: Good ×5 的间隔序列（旧 D 与阻尼）" {
+  // FSRS-5 公式原值独立复算后取整：3 → 11 → 35 → 101 → 269。
   let f = Fsrs::new()
   let mut st = f.init("c1", 0L)
   let mut now : Timestamp = 0L
@@ -409,7 +403,7 @@ test "fsrs: Good ×5 的间隔序列（含新 D 与阻尼）" {
   assert_true(near(ivs[1], 11.0))
   assert_true(near(ivs[2], 35.0))
   assert_true(near(ivs[3], 101.0))
-  assert_true(near(ivs[4], 270.0))
+  assert_true(near(ivs[4], 269.0))
 }
 
 ///|
