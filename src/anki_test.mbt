@@ -3,10 +3,10 @@
 //
 // 契约：
 //   1. ISO8601 历法换算对已知日期精确（含闰日、世纪边界）
-//   2. 指令头（separator/html/note-type/columns）齐全且位置正确
+//   2. 指令头（separator/html/columns）与调度器来源注释齐全
 //   3. 卡片按 card_id 排序，两次导出逐字节相同
 //   4. 与 replay 引擎共享状态逻辑（导出不引入第二份状态机）
-//   5. difficulty 列的语义随调度器分派（note-type 头标注来源）
+//   5. difficulty 列的语义随调度器分派（普通注释标注来源）
 // ============================================================================
 
 ///|
@@ -53,8 +53,8 @@ test "anki: 导出格式头齐全且行序稳定" {
   // 指令头在前四行
   assert_eq(lines[0], "#separator:tab")
   assert_eq(lines[1], "#html:false")
-  assert_true(lines[2].has_prefix("#note-type:fsrs"))
-  assert_true(lines[3].has_prefix("#columns:card_id;"))
+  assert_true(lines[2].has_prefix("# scheduler: fsrs"))
+  assert_true(lines[3].has_prefix("#columns:card_id\t"))
   // 数据行按 card_id 排序：a 在 b 前
   let first_data = lines[4].split("\t").collect()
   let second_data = lines[5].split("\t").collect()
@@ -109,14 +109,14 @@ test "anki: 数据行字段与 CardState 一致" {
 }
 
 ///|
-test "anki: note-type 头随调度器变化（difficulty 语义防误读）" {
+test "anki: 来源注释随调度器变化（difficulty 语义防误读）" {
   let log = anki_parse_log(
     "{\"card_id\":\"k\",\"reviewed_at\":1700000000,\"due_at\":1699999000,\"grade\":3,\"elapsed_days\":0}\n",
   )
   let a = export_anki_from_log(log, AnyScheduler::Fsrs(Fsrs::new()))
   let b = export_anki_from_log(log, AnyScheduler::Sm2(Sm2::new()))
-  assert_true(a.contains("#note-type:fsrs"))
-  assert_true(b.contains("#note-type:sm2"))
+  assert_true(a.contains("# scheduler: fsrs"))
+  assert_true(b.contains("# scheduler: sm2"))
 }
 
 ///|

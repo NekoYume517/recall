@@ -10,7 +10,7 @@
 //
 //   #separator:tab
 //   #html:false
-//   #columns:卡片ID;稳定性;难度;成功次数;遗忘次数;下次到期;当前间隔;阶段
+//   #columns:<以 Tab 分隔的八个列名，与数据行使用同一分隔符>
 //   <card_id>\t<S>\t<D>\t<reps>\t<lapses>\t<due ISO8601>\t<interval>\t<phase>
 //
 // 每行一张卡的**最终状态**（重放日志得到），字段顺序固定，
@@ -144,14 +144,26 @@ fn card_to_tsv_line(st : CardState, scheduler_name : String) -> String {
 }
 
 ///|
+fn anki_comment_value(s : String) -> String {
+  let sb = StringBuilder()
+  for c in s.to_array() {
+    match c {
+      '\r' => sb.write_string("\\r")
+      '\n' => sb.write_string("\\n")
+      _ => sb.write_char(c)
+    }
+  }
+  sb.to_string()
+}
+
+///|
 /// 重放最终状态 → Anki 文本导入格式（TSV + 指令头）。
 ///
 /// 卡片按 card_id 字典序排列——稳定顺序让两次导出可逐字节比较，
 /// 也让人工浏览有固定次序。
 ///
-/// 调度器名写进 `#note-type` 头：difficulty 列的语义由它决定
-/// （FSRS=D / SM-2=EF / Leitner=盒号），跨算法误读是本项目
-/// 反复强调的坑（见 docs/grade-mapping.md）。
+/// 调度器名放入普通注释，说明 difficulty 的语义（FSRS=D、SM-2=EF、
+/// Leitner=盒号）。它不是用户的 Anki 笔记类型，不设置 notetype 指令。
 pub fn export_anki_tsv(
   states : Array[CardState],
   scheduler_name : String,
@@ -159,8 +171,8 @@ pub fn export_anki_tsv(
   let sb = StringBuilder()
   sb.write_string("#separator:tab\n")
   sb.write_string("#html:false\n")
-  sb.write_string("#note-type:\{scheduler_name}\n")
-  sb.write_string("#columns:" + anki_columns().join(";") + "\n")
+  sb.write_string("# scheduler: \{anki_comment_value(scheduler_name)}\n")
+  sb.write_string("#columns:" + anki_columns().join("\t") + "\n")
   // 排序：card_id 字典序
   let sorted = states.copy()
   sorted.sort_by(fn(a, b) { a.card_id.compare(b.card_id) })

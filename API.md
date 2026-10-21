@@ -435,16 +435,18 @@ pub fn export_anki_from_log(log : ReviewLog, s : AnyScheduler) -> String
 ```
 #separator:tab
 #html:false
-#note-type:fsrs
-#columns:card_id;stability;difficulty;reps;lapses;due;interval_days;phase
+# scheduler: fsrs
+#columns:card_id	stability	difficulty	reps	lapses	due	interval_days	phase
 c1	9.468…	8.016…	24	6	2026-09-05 13:09:10	9	复习
 ```
 
 要点：
 - **每行一张卡的最终状态**（重放日志得到），卡片按 card_id 排序——
   两次导出可逐字节比较（有测试锁定）。
-- `#note-type` 头写调度器名：difficulty 列语义按调度器分派
+- `# scheduler:` 普通注释写调度器名：difficulty 列语义按调度器分派
   （FSRS=D(1..10) / SM-2=EF / Leitner=盒号），防止跨算法误读。
+- `#columns` 使用真正的 Tab 分隔，与 `#separator:tab` 和数据行一致。
+  调度器名不是 Anki 笔记类型，因此不输出 `notetype` 指令。
 - 时间用 ISO8601（UTC），纯手写 civil_from_days 历法换算。
   **负时间戳必须 floor 除法**——向零截断会让 1900 年前的日期
   分钟/秒变负数（实测输出 "-18:-40:00"，已修并有回归测试）。

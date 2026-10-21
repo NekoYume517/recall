@@ -18,18 +18,23 @@ def main():
         log.write_text(''.join(json.dumps({
             'card_id': card_id, 'reviewed_at': 0, 'due_at': 0,
             'grade': 3, 'elapsed_days': 0,
-        }, ensure_ascii=False) + '\n' for card_id in card_ids), encoding='utf-8')
+        }) + '\n' for card_id in card_ids), encoding='utf-8')
         output = subprocess.run([
             'moon', 'run', 'cmd/recall', '--warn-list', '-a', '--', 'replay',
             '--log', str(log), '--scheduler', 'fsrs', '--anki',
-        ], check=True, stdout=subprocess.PIPE, encoding='utf-8').stdout
+        ], check=True, stdout=subprocess.PIPE).stdout.decode('utf-8')
+    # Read bytes before decoding so Python does not normalize CR inside fields.
     # Headers occupy four physical lines; CSV parsing keeps quoted newlines.
-    data = ''.join(output.splitlines(keepends=True)[4:])
+    lines = output.splitlines(keepends=True)
+    assert lines[0].rstrip('\r\n') == '#separator:tab'
+    assert lines[2].rstrip('\r\n') == '# scheduler: fsrs'
+    assert len(lines[3].removeprefix('#columns:').rstrip('\r\n').split('\t')) == 8
+    data = ''.join(lines[4:])
     rows = [row for row in csv.reader(io.StringIO(data), delimiter='\t') if row]
     assert len(rows) == len(card_ids), rows
     assert all(len(row) == 8 for row in rows), rows
-    assert [row[0] for row in rows] == sorted(card_ids), rows
-    print('CLI JSONL -> TSV -> Python CSV: 4 IDs preserved, 8 columns each')
+    assert sorted(row[0] for row in rows) == sorted(card_ids), rows
+    print('CLI JSONL -> TSV -> Python CSV: 4 IDs preserved, 8 columns each, valid headers')
 
 
 if __name__ == '__main__':
