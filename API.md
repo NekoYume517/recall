@@ -414,6 +414,38 @@ pub fn probe_final_backlog(s : AnyScheduler, req, new_per_day : Int32) -> Int32
 - 反直觉行为被自然捕捉：**学太快反而积压**（超过消化能力后，每天
   塞得越多、未复习的卡积得越多）——这正是必须用模拟而非公式的证据
 
+### 5.2 Anki 可读格式导出 `src/anki.mbt`
+
+产出 **Anki 文本导入格式**（TSV + 指令头），不是 .apkg 二进制——
+.apkg 是 SQLite+zip 的私有打包，TSV 是 Anki 官方文档化的导入格式
+（File > Import），不依赖 Anki 版本内部实现。
+
+```moonbit
+pub fn timestamp_to_iso8601(ts : Timestamp) -> String
+pub fn export_anki_tsv(states : Array[CardState], scheduler_name : String) -> String
+pub fn export_anki_from_log(log : ReviewLog, s : AnyScheduler) -> String
+```
+
+输出形如：
+
+```
+#separator:tab
+#html:false
+#note-type:fsrs
+#columns:card_id;stability;difficulty;reps;lapses;due;interval_days;phase
+c1	9.468…	8.016…	24	6	2026-09-05 13:09:10	9	复习
+```
+
+要点：
+- **每行一张卡的最终状态**（重放日志得到），卡片按 card_id 排序——
+  两次导出可逐字节比较（有测试锁定）。
+- `#note-type` 头写调度器名：difficulty 列语义按调度器分派
+  （FSRS=D(1..10) / SM-2=EF / Leitner=盒号），防止跨算法误读。
+- 时间用 ISO8601（UTC），纯手写 civil_from_days 历法换算。
+  **负时间戳必须 floor 除法**——向零截断会让 1900 年前的日期
+  分钟/秒变负数（实测输出 "-18:-40:00"，已修并有回归测试）。
+- CLI 用法：`recall replay --log FILE --scheduler fsrs --anki`
+
 ## 6. 统计 `src/stats.mbt`
 
 ```moonbit

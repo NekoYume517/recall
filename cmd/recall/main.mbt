@@ -312,9 +312,10 @@ fn bar(value : Double, max_value : Double, width : Int32) -> String {
 fn usage_text() -> String {
   let lines = [
     "recall - 间隔重复调度引擎 (SM-2 / FSRS-5 / Leitner)", "", "用法:",
-    "  recall replay   --log FILE --scheduler sm2|fsrs|leitner [--json]", "  recall compare  --log FILE --a sm2 --b fsrs",
-    "  recall simulate --scheduler fsrs [--days 90] [--new-per-day 20]", "                  [--review-limit 200] [--policy realistic] [--seed N]",
-    "  recall advice   --scheduler fsrs [--days 90] [--review-limit 200]", "                  [--target-backlog 0] [--policy realistic] [--retention 0.9] [--seed N]",
+    "  recall replay   --log FILE --scheduler sm2|fsrs|leitner [--json|--anki]",
+    "  recall compare  --log FILE --a sm2 --b fsrs", "  recall simulate --scheduler fsrs [--days 90] [--new-per-day 20]",
+    "                  [--review-limit 200] [--policy realistic] [--seed N]", "  recall advice   --scheduler fsrs [--days 90] [--review-limit 200]",
+    "                  [--target-backlog 0] [--policy realistic] [--retention 0.9] [--seed N]",
     "  recall stats    --log FILE", "  recall curve    --log FILE [--buckets 10]",
     "", "选项:", "  --log            复习日志路径 (JSONL, 每行一个事件)",
     "  --scheduler      调度器: sm2 | fsrs | leitner", "  --a / --b        compare 的左右两侧调度器",
@@ -322,8 +323,8 @@ fn usage_text() -> String {
     "  --review-limit   每天复习上限, 0 表示不限 (默认 200)", "  --policy         评分策略: optimistic | realistic | pessimistic (默认 realistic)",
     "  --buckets        保持率曲线分桶数 (默认 10)", "  --retention      目标保持率 (默认 0.9)",
     "  --target-backlog advice 的积压目标, 张 (默认 0 = 清零)", "  --seed           模拟的伪随机种子 (默认 20240101)",
-    "  --json           以 JSON 输出 (仅 replay)", "", "退出码: 0 成功 / 1 数据错误 / 2 用法错误",
-    "",
+    "  --json           以 JSON 输出 (仅 replay)", "  --anki           以 Anki 文本导入格式(TSV)输出最终状态 (仅 replay)",
+    "", "退出码: 0 成功 / 1 数据错误 / 2 用法错误", "",
   ]
   let sb = StringBuilder()
   for line in lines {
@@ -434,6 +435,23 @@ fn cmd_replay(args : Args) -> Int32 {
   }
   let s = @lib.AnyScheduler::by_name(sched_name)
   let res = @lib.replay(log, s)
+  if args.has("anki") {
+    // Anki 文本导入格式（TSV）：File > Import 直接可用
+    let states : Array[@lib.CardState] = []
+    let ids : Array[String] = []
+    for cid in res.final_states.keys() {
+      ids.push(cid)
+    }
+    ids.sort()
+    for cid in ids {
+      match res.final_states.get(cid) {
+        Some(st) => states.push(st)
+        None => ()
+      }
+    }
+    println(@lib.export_anki_tsv(states, s.name()))
+    return 0
+  }
   if args.has("json") {
     let ids : Array[String] = []
     for cid in res.final_states.keys() {

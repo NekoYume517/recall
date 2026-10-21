@@ -18,6 +18,10 @@ pub fn compute_stats(ReviewLog) -> Array[CardStats]
 
 pub fn days_between(Int64, Int64) -> Double
 
+pub fn export_anki_from_log(ReviewLog, AnyScheduler) -> String
+
+pub fn export_anki_tsv(Array[CardState], String) -> String
+
 pub fn forgetting_curve(Double, Double) -> Double
 
 pub fn fsrs_default_w() -> Array[Double]
@@ -99,6 +103,8 @@ pub fn stability_after_lapse(Array[Double], Double, Double, Double) -> Double
 pub fn stability_after_success(Array[Double], Double, Double, Double, Int32) -> Double
 
 pub fn step(Array[Double], Double, Double, Double, Double, Int32, Bool) -> (Double, Double, Double)
+
+pub fn timestamp_to_iso8601(Int64) -> String
 
 pub fn validate_fsrs_reference() -> FsrsWeightCheck
 
