@@ -33,7 +33,7 @@ def main():
     rows = [row for row in csv.reader(io.StringIO(data), delimiter='\t') if row]
     assert len(rows) == len(card_ids), rows
     assert all(len(row) == 8 for row in rows), rows
-    assert sorted(row[0] for row in rows) == sorted(card_ids), rows
+    assert [row[0] for row in rows] == sorted(card_ids), rows
     print('CLI JSONL -> TSV -> Python CSV: 4 IDs preserved, 8 columns each, valid headers')
 
 

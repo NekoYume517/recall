@@ -175,7 +175,7 @@ pub fn export_anki_tsv(
   sb.write_string("#columns:" + anki_columns().join("\t") + "\n")
   // 排序：card_id 字典序
   let sorted = states.copy()
-  sorted.sort_by(fn(a, b) { a.card_id.compare(b.card_id) })
+  sorted.sort_by(fn(a, b) { a.card_id.lexical_compare(b.card_id) })
   for st in sorted {
     sb.write_string(card_to_tsv_line(st, scheduler_name))
     sb.write_string("\n")
