@@ -314,14 +314,16 @@ fn usage_text() -> String {
     "recall - 间隔重复调度引擎 (SM-2 / FSRS-5 / Leitner)", "", "用法:",
     "  recall replay   --log FILE --scheduler sm2|fsrs|leitner [--json]", "  recall compare  --log FILE --a sm2 --b fsrs",
     "  recall simulate --scheduler fsrs [--days 90] [--new-per-day 20]", "                  [--review-limit 200] [--policy realistic] [--seed N]",
+    "  recall advice   --scheduler fsrs [--days 90] [--review-limit 200]", "                  [--target-backlog 0] [--policy realistic] [--retention 0.9] [--seed N]",
     "  recall stats    --log FILE", "  recall curve    --log FILE [--buckets 10]",
     "", "选项:", "  --log            复习日志路径 (JSONL, 每行一个事件)",
     "  --scheduler      调度器: sm2 | fsrs | leitner", "  --a / --b        compare 的左右两侧调度器",
     "  --days           模拟天数 (默认 90)", "  --new-per-day    每天新增卡片数 (默认 20)",
     "  --review-limit   每天复习上限, 0 表示不限 (默认 200)", "  --policy         评分策略: optimistic | realistic | pessimistic (默认 realistic)",
     "  --buckets        保持率曲线分桶数 (默认 10)", "  --retention      目标保持率 (默认 0.9)",
-    "  --seed           模拟的伪随机种子 (默认 20240101)", "  --json           以 JSON 输出 (仅 replay)",
-    "", "退出码: 0 成功 / 1 数据错误 / 2 用法错误", "",
+    "  --target-backlog advice 的积压目标, 张 (默认 0 = 清零)", "  --seed           模拟的伪随机种子 (默认 20240101)",
+    "  --json           以 JSON 输出 (仅 replay)", "", "退出码: 0 成功 / 1 数据错误 / 2 用法错误",
+    "",
   ]
   let sb = StringBuilder()
   for line in lines {
@@ -1049,6 +1051,172 @@ fn cmd_curve(args : Args) -> Int32 {
 }
 
 // ---------------------------------------------------------------------------
+// 子命令：advice（负载优化建议）
+// ---------------------------------------------------------------------------
+
+///|
+/// `recall advice` — 搜索「窗口内积压不超标的最大每日新卡数」。
+///
+/// 二分搜索复用模拟器，每次 probe 是一次完整模拟，结果确定性可复现。
+fn cmd_advice(args : Args) -> Int32 {
+  let sched_name = args.get("scheduler", "fsrs")
+  if !@lib.scheduler_name_valid(sched_name) {
+    println("用法错误: 未知调度器 " + sched_name)
+    return 2
+  }
+  let policy = args.get("policy", "realistic")
+  if !@lib.grade_policy_valid(policy) {
+    println("用法错误: 未知评分策略 " + policy)
+    return 2
+  }
+  let days = match args.get_opt("days") {
+    None => 90
+    Some(v) =>
+      match parse_int_loose(v) {
+        Some(n) => n
+        None => {
+          println("用法错误: --days 需要一个整数，得到 '\{v}'")
+          return 2
+        }
+      }
+  }
+  let review_limit = match args.get_opt("review-limit") {
+    None => 200
+    Some(v) =>
+      match parse_int_loose(v) {
+        Some(n) => n
+        None => {
+          println(
+            "用法错误: --review-limit 需要一个整数，得到 '\{v}'",
+          )
+          return 2
+        }
+      }
+  }
+  let target_retention = match args.get_opt("retention") {
+    None => 0.9
+    Some(v) =>
+      match parse_double_loose(v) {
+        Some(n) => n
+        None => {
+          println(
+            "用法错误: --retention 需要一个小数，得到 '\{v}'",
+          )
+          return 2
+        }
+      }
+  }
+  let seed = match args.get_opt("seed") {
+    None => 20240101L
+    Some(v) =>
+      match parse_int_loose(v) {
+        Some(n) => n.to_int64()
+        None => {
+          println("用法错误: --seed 需要一个整数，得到 '\{v}'")
+          return 2
+        }
+      }
+  }
+  let target_backlog = match args.get_opt("target-backlog") {
+    None => 0
+    Some(v) =>
+      match parse_int_loose(v) {
+        Some(n) => n
+        None => {
+          println(
+            "用法错误: --target-backlog 需要一个整数，得到 '\{v}'",
+          )
+          return 2
+        }
+      }
+  }
+  if days <= 0 {
+    println("用法错误: --days 必须为正")
+    return 2
+  }
+  if review_limit < 0 {
+    println("用法错误: --review-limit 必须非负（0 表示不限）")
+    return 2
+  }
+  if target_backlog < 0 {
+    println("用法错误: --target-backlog 必须非负")
+    return 2
+  }
+  let s = @lib.AnyScheduler::by_name_with_retention(
+    sched_name, target_retention,
+  )
+  if sched_name != "fsrs" && target_retention != 0.9 {
+    println(
+      "提示: " +
+      sched_name +
+      " 调度器没有目标保持率参数（算法局限），--retention 未生效（仅 FSRS 支持）",
+    )
+  }
+  let req : @lib.AdviceRequest = {
+    days,
+    review_limit,
+    desired_retention: target_retention,
+    policy_factory: fn() { @lib.grade_policy_with_seed(policy, seed) },
+    seed,
+    target_backlog,
+  }
+  let r = @lib.load_advice(s, req)
+  println("负载建议: " + s.name() + " / " + policy + " 策略")
+  println(
+    "参数: " +
+    days.to_string() +
+    " 天窗口, 复习上限 " +
+    (if review_limit == 0 { "不限" } else { review_limit.to_string() }) +
+    ", 积压目标 " +
+    target_backlog.to_string() +
+    " 张, 种子 " +
+    seed.to_string(),
+  )
+  println("")
+  println("→ 推荐每天新卡: " + r.new_per_day.to_string() + " 张")
+  println("")
+  println("依据（该速率下的模拟）:")
+  println(
+    "  最终积压 " +
+    r.final_backlog.to_string() +
+    " 张（目标 ≤ " +
+    target_backlog.to_string() +
+    "）, 总复习 " +
+    r.simulation.total_reviews.to_string() +
+    " 次, 最大积压 " +
+    r.simulation.max_backlog.to_string() +
+    " 张",
+  )
+  match r.next_step_backlog {
+    Some(nb) =>
+      println(
+        "  每天多学 1 张 → 最终积压 " +
+        nb.to_string() +
+        " 张, 超出目标",
+      )
+    None => ()
+  }
+  println("")
+  println(r.summary)
+  // 附积压趋势摘要（首/中/尾三天）
+  let dl = r.simulation.days
+  if dl.length() >= 3 {
+    let mid = dl[dl.length() / 2]
+    println("")
+    println(
+      "积压轨迹: 首日 " +
+      dl[0].backlog.to_string() +
+      " → 中段 " +
+      mid.backlog.to_string() +
+      " → 末日 " +
+      dl[dl.length() - 1].backlog.to_string() +
+      " 张",
+    )
+  }
+  0
+}
+
+// ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
 
@@ -1085,6 +1253,7 @@ fn main {
     "replay" => cmd_replay(args)
     "compare" => cmd_compare(args)
     "simulate" => cmd_simulate(args)
+    "advice" => cmd_advice(args)
     "stats" => cmd_stats(args)
     "curve" => cmd_curve(args)
     "help" => {

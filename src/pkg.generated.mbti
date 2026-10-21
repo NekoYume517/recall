@@ -46,6 +46,8 @@ pub fn leitner_default_boxes() -> Int32
 
 pub fn leitner_default_intervals() -> Array[Double]
 
+pub fn load_advice(AnyScheduler, AdviceRequest) -> AdviceResult
+
 pub fn max_interval_days() -> Double
 
 pub fn next_difficulty(Array[Double], Double, Int32) -> Double
@@ -55,6 +57,8 @@ pub fn optimistic_policy() -> (CardState) -> Grade
 pub fn overall_stats(Array[CardStats]) -> OverallStats
 
 pub fn pessimistic_policy(Int64) -> (CardState) -> Grade
+
+pub fn probe_final_backlog(AnyScheduler, AdviceRequest, Int32) -> Int32
 
 pub fn realistic_policy(Int64) -> (CardState) -> Grade
 
@@ -109,6 +113,27 @@ pub(all) suberror LogError {
 } derive(@debug.Debug)
 
 // Types and methods
+pub(all) struct AdviceRequest {
+  days : Int32
+  review_limit : Int32
+  desired_retention : Double
+  policy_factory : () -> (CardState) -> Grade
+  seed : Int64
+  target_backlog : Int32
+} derive(@debug.Debug)
+pub fn AdviceRequest::default() -> Self
+pub fn AdviceRequest::to_config(Self, Int32) -> SimConfig
+
+pub(all) struct AdviceResult {
+  new_per_day : Int32
+  simulation : SimResult
+  final_backlog : Int32
+  next_step_backlog : Int32?
+  search_lo : Int32
+  search_hi : Int32
+  summary : String
+} derive(@debug.Debug)
+
 pub(all) enum AnyScheduler {
   Sm2(Sm2)
   Fsrs(Fsrs)

@@ -371,6 +371,49 @@ pub fn grade_policy(name : StringView) -> ((CardState) -> Grade)
 
 **确定性要求**：模拟必须可复现。伪随机用固定种子的 LCG，不要用系统随机。
 
+### 5.1 负载优化建议器 `src/advice.mbt`
+
+回答"我想在 D 天内把积压控制住，每天最多能学几张新卡"。
+
+```moonbit
+pub(all) struct AdviceRequest {
+  days : Int32                       // 建议窗口
+  review_limit : Int32               // 每天复习上限，0 = 无限
+  desired_retention : Double
+  /// 评分策略**工厂**：每次模拟调用一次，新建独立随机流的实例。
+  /// 不能放闭包实例——LCG 有状态，多次 probe 会互相污染随机流
+  /// （这正是"同输入必须同输出"被破坏的真实案例，见 git 历史）。
+  policy_factory : () -> (CardState) -> Grade
+  seed : Int64                       // 建议可复现，种子是配置的一部分
+  target_backlog : Int32             // 窗口结束时允许的最大积压，0 = 清零
+}
+
+pub(all) struct AdviceResult {
+  new_per_day : Int32                // 推荐的每日新卡数
+  simulation : SimResult             // 该速率下的完整模拟
+  final_backlog : Int32
+  next_step_backlog : Int32?         // 多学 1 张的积压（展示"为什么"）
+  search_lo : Int32
+  search_hi : Int32
+  summary : String                   // 一句话结论
+}
+
+pub fn AdviceRequest::default() -> AdviceRequest
+pub fn load_advice(s : AnyScheduler, req : AdviceRequest) -> AdviceResult
+pub fn AdviceRequest::to_config(self, new_per_day : Int32) -> SimConfig
+pub fn probe_final_backlog(s : AnyScheduler, req, new_per_day : Int32) -> Int32
+```
+
+方法：**模拟搜索（二分）**，不是解析解——积压动力学非线性（Again →
+间隔回退 → 更多到期 → 评分策略感知逾期更悲观），解析近似会漏掉
+"积压自我强化"。模拟器的确定性让搜索结果可复现。
+
+三个诚实分支：
+- 连 0 张新卡都清不了存量 → 建议 0，summary 明说"存量太大"
+- 上界内绰绰有余 → 直接返回 review_limit，提示可以调大上限
+- 反直觉行为被自然捕捉：**学太快反而积压**（超过消化能力后，每天
+  塞得越多、未复习的卡积得越多）——这正是必须用模拟而非公式的证据
+
 ## 6. 统计 `src/stats.mbt`
 
 ```moonbit
@@ -396,6 +439,7 @@ pub fn retention_curve(log : ReviewLog, buckets : Int) -> Array[(Double, Double)
 recall replay   --log <file.jsonl> --scheduler sm2|fsrs|leitner [--json]
 recall compare  --log <file.jsonl> --a sm2 --b fsrs
 recall simulate --scheduler fsrs --days 90 --new-per-day 20 --review-limit 200 --policy realistic
+recall advice   --scheduler fsrs --days 90 --review-limit 200 --target-backlog 0 [--policy realistic] [--retention 0.9] [--seed N]
 recall stats    --log <file.jsonl>
 recall curve    --log <file.jsonl> --buckets 10
 ```
