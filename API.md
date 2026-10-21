@@ -207,8 +207,30 @@ pub(all) struct Fsrs {
 pub fn Fsrs::new() -> Fsrs
 pub fn Fsrs::with_params(w : Array[Double]) -> Fsrs
 
+// 权重验证套件（src/weight_validation.mbt）
+pub(all) struct FsrsWeightIssue {
+  index : Int      // 出问题的权重下标（-1 = 整体性问题）
+  value : Double   // 读到的值
+  why : String     // 人话解释
+}
+pub(all) enum FsrsWeightCheck {
+  Valid
+  Invalid(Array[FsrsWeightIssue])   // 多个问题全部收集
+}
+pub fn validate_fsrs_weights(w : Array[Double]) -> FsrsWeightCheck
+pub fn validate_fsrs_semantics(w : Array[Double]) -> FsrsWeightCheck
+pub fn validate_fsrs_reference() -> FsrsWeightCheck
+pub fn Fsrs::with_params_checked(w : Array[Double]) -> Result[Fsrs, String]
+
 pub impl Scheduler for Fsrs
 ```
+
+**`with_params` 与 `with_params_checked` 的分工**：
+
+- `with_params`：宽容版。长度不足 21 时静默回退官方默认——现有 CLI 路径依赖这个行为（用户看不懂权重错误时至少能跑）。
+- `with_params_checked`：严格版。结构（长度/有限性/逐项范围）+ 语义（S₀ 单调、Good×5 不爆炸、评分敏感性）两关全过才返回，否则 `Err` 带全部问题清单。**新代码建议用这个**——权重训练器、批量实验等场景下，静默回退会把"权重没生效"伪装成"结果不显著"。
+
+`validate_fsrs_reference` 不接受参数：它验证的是官方默认权重下全部公式常量的联立锚点（R(S,S)=0.9 四评分同时成立、间隔自检 I(S,0.9)=S、成功/遗忘路径的独立复算值）。任何一处系数抄错或符号搞反都会打破联立——这是比逐公式测试更难绕过的自检。锚点期望值用 Python 独立复算（零共享代码），容差 1e-9。
 
 公式（**核心必做**）：
 
