@@ -31,7 +31,7 @@ test "wval: 长度错误只报一条且解释版本错配" {
     let w = Array::make(n, 1.0)
     w
   }
-  let checks = [(mk(18), 18), (mk(19), 19), (mk(23), 23)]
+  let checks = [(mk(18), 18), (mk(20), 20), (mk(23), 23)]
   for c in checks {
     let (w, n) = c
     match validate_fsrs_weights(w) {
@@ -157,4 +157,41 @@ test "wval: 参考验证的联立锚点对公式改动敏感" {
   let sp = stability_after_success(w, 5.0, 3.0, 0.9, 3)
   // w9 变大 → S^(-w9) 变小 → 增益变小
   assert_true(sp < 10.948986752888501)
+}
+
+///|
+test "wval: checked initial stability matches runtime floor" {
+  for i in 0..<4 {
+    let w = fresh_default_w()
+    w[i] = 0.05
+    match validate_fsrs_weights(w) {
+      Invalid(xs) => assert_true(xs.iter().any(fn(x) { x.index == i }))
+      Valid => fail("initial stability below 0.1 must be rejected")
+    }
+    assert_true(Fsrs::with_params_checked(w) is Err(_))
+    w[i] = 0.1
+    assert_true(validate_fsrs_weights(w) is Valid)
+  }
+}
+
+///|
+test "wval: native 19 and legacy 21 weights agree" {
+  let full = fresh_default_w()
+  let native = Array::makei(19, fn(i) { full[i] })
+  assert_true(validate_fsrs_weights(native) is Valid)
+  match (Fsrs::with_params_checked(native), Fsrs::with_params_checked(full)) {
+    (Ok(a), Ok(b)) => {
+      let ca = a.review(a.init("native", 0L), Good, 0L)
+      let cb = b.review(b.init("legacy", 0L), Good, 0L)
+      assert_eq(ca.stability, cb.stability)
+      assert_eq(ca.difficulty, cb.difficulty)
+      assert_eq(ca.interval_days, cb.interval_days)
+    }
+    _ => fail("both FSRS-5 weight lengths must be accepted")
+  }
+  full[19] = 999.0
+  full[20] = -999.0
+  assert_true(Fsrs::with_params_checked(full) is Ok(_))
+  full[20] = 0.0 / 0.0
+  assert_true(validate_fsrs_weights(full) is Invalid(_))
 }

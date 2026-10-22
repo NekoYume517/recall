@@ -9,7 +9,7 @@
 //
 // 参考：
 //   Ye et al., "FSRS: A modern, efficient spaced repetition scheduler" (2023)
-//   open-spaced-repetition 的默认权重（19 个官方值 + 2 个扩展位）
+//   open-spaced-repetition 的默认权重（19 个官方值；默认数组另保留 2 个本库历史兼容位）
 //
 // 只实现推理（给定权重计算），不实现权重训练。
 
