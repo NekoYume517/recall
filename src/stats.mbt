@@ -197,12 +197,15 @@ pub(all) struct OverallStats {
   lapses : Int32
   /// 整体保持率 = (总复习 − 总遗忘) / 总复习
   retention_rate : Double
-  /// 平均间隔（所有卡片 mean_interval 的算术平均）
+  /// 有间隔样本的卡片 mean_interval 的等权平均，无样本卡片不计入。
+  /// 首条显式正间隔有效；同刻重复复习的零间隔也有效。
   mean_interval : Double
 } derive(Debug)
 
 ///|
-/// 从卡片统计聚合出整体指标。
+/// 从 `compute_stats` 生成的卡片统计聚合整体指标。
+/// 有样本卡片判据为 reviews > 1 或 mean_interval > 0；空样本整体均值为 0。
+/// 若自行构造 CardStats，应保留相同的计数与间隔约定。
 pub fn overall_stats(rows : Array[CardStats]) -> OverallStats {
   let mut reviews = 0
   let mut lapses = 0

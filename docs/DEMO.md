@@ -22,11 +22,11 @@ moon version
 
 ```bash
 moon check
-moon test      # 371 个测试
+moon test      # 372 个测试
 moon build --target wasm
 ```
 
-预期：`Total tests: 371, passed: 371, failed: 0.`
+预期：`Total tests: 372, passed: 372, failed: 0.`
 
 ## 二、核心产出：积压预测
 
@@ -78,7 +78,7 @@ moon run cmd/recall -- compare --log examples/reviews.jsonl --a sm2 --b fsrs
 ```
 指标                                sm2           fsrs             差值
 --------------------------------------------------------------------
-最终间隔总和(天)                    174058.0        13371.0      -160687.0
+最终间隔总和(天)                    174058.0        13372.0      -160687.0
 遗忘次数                               70              6            -64
 平均间隔(天)                        6962.3          534.8        -6427.5
 触及上限(100年)卡数                     4              0             -4

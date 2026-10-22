@@ -481,6 +481,12 @@ pub fn retention_curve(log : ReviewLog, buckets : Int) -> Array[(Double, Double)
 没有前驱，不计入间隔样本。同刻重复复习的零间隔有效，全部样本为零时曲线
 返回一个上界为 0 的桶。经验保持率受有限样本影响，不保证单调。
 
+`overall_stats(rows)` 接收 `compute_stats` 生成的卡片统计。`mean_interval`
+是有间隔样本的卡片均值的等权平均，判据为 `reviews > 1 || mean_interval > 0`：
+首条显式正间隔会计入，首次零间隔无样本会排除，同刻重复复习的有效零样本会
+计入分母。它不按间隔样本数量加权；没有有效样本时返回 0。手工构造
+`CardStats` 时也应遵循上述约定。
+
 ## 7. CLI `cmd/recall/main.mbt`
 
 ```

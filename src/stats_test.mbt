@@ -383,3 +383,22 @@ test "curve: 与 compute_stats 同口径（elapsed=0 时间戳回推）" {
   // 与 compute_stats 的保持率一致：全部成功 → 1.0
   assert_true(near(rows[0].retention_rate, 1.0))
 }
+
+///|
+test "overall: interval sample presence differs from a zero mean" {
+  let log = ReviewLog::new()
+  // A truncated log can start with a known positive interval.
+  log.push(ReviewEvent::new("positive", 0L, 0L, Good, 8.0))
+  // A lone zero interval has no predecessor and supplies no sample.
+  log.push(ReviewEvent::new("no-sample", 0L, 0L, Good, 0.0))
+  // Repeated reviews at the same instant supply a genuine zero sample.
+  log.push(ReviewEvent::new("zero", 0L, 0L, Good, 0.0))
+  log.push(ReviewEvent::new("zero", 0L, 0L, Good, 0.0))
+  let combined = overall_stats(compute_stats(log))
+  assert_eq(combined.cards, 3)
+  assert_eq(combined.reviews, 4)
+  assert_eq(combined.mean_interval, 4.0)
+  let no_sample = ReviewLog::new()
+  no_sample.push(ReviewEvent::new("new", 0L, 0L, Good, 0.0))
+  assert_eq(overall_stats(compute_stats(no_sample)).mean_interval, 0.0)
+}
