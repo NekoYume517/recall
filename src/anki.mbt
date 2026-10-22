@@ -121,18 +121,12 @@ fn anki_escape_field(s : String) -> String {
 
 ///|
 /// 单张卡状态 → 一行 TSV。
-fn card_to_tsv_line(st : CardState, scheduler_name : String) -> String {
-  // difficulty 语义按调度器分派（见 types.mbt 的说明），列头带调度器名
-  // 防止跨算法误读——FSRS 的 D ∈ [1,10]，SM-2 是 EF（约 1.3..3），Leitner 是盒号
-  let diff_note = match scheduler_name {
-    "fsrs" => "\{st.difficulty}"
-    "sm2" => "\{st.difficulty}"
-    _ => "\{st.difficulty}"
-  }
+fn card_to_tsv_line(st : CardState) -> String {
+  // difficulty 保留调度器原值；导出头部的 scheduler 注释说明其语义。
   [
     st.card_id,
     st.stability.to_string(),
-    diff_note,
+    st.difficulty.to_string(),
     st.reps.to_string(),
     st.lapses.to_string(),
     timestamp_to_iso8601(st.due),
@@ -177,7 +171,7 @@ pub fn export_anki_tsv(
   let sorted = states.copy()
   sorted.sort_by(fn(a, b) { a.card_id.lexical_compare(b.card_id) })
   for st in sorted {
-    sb.write_string(card_to_tsv_line(st, scheduler_name))
+    sb.write_string(card_to_tsv_line(st))
     sb.write_string("\n")
   }
   sb.to_string()
