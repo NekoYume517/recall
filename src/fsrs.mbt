@@ -110,6 +110,8 @@ pub fn initial_stability(w : Array[Double], rating : Int32) -> Double {
 /// - `w[5]`：对评分的敏感度（默认 0.5345，指数项的系数）
 ///
 /// g=1 时指数项为 exp(0)=1，于是 D_0(1) = w[4]，正好落在 [1,10] 内。
+/// 底层公式前置条件：`w` 至少 19 项；调用方负责验证有限性和范围。
+/// 推荐通过 `Fsrs::with_params_checked` 构造调度器。
 pub fn initial_difficulty(w : Array[Double], rating : Int32) -> Double {
   let g = rating.to_double()
   // w[4]：基准；w[5]：敏感度
@@ -162,6 +164,8 @@ fn clamp_difficulty(d : Double) -> Double {
 ///   目标必须是 **D_0(4)**（即"把这张卡当成 Easy 时该有的初始难度"），
 ///   不是 w[4]。官方 py-fsrs 参考实现用 D_0(4)；
 ///   两者差约 3.97，单步影响只有 0.018，但方向性错误会长期累积。
+/// 底层公式前置条件：`w` 至少 19 项；调用方负责验证有限性和范围。
+/// 推荐通过 `Fsrs::with_params_checked` 构造调度器。
 pub fn next_difficulty(w : Array[Double], d : Double, rating : Int32) -> Double {
   let g = rating.to_double()
   // w[6]：难度增量系数
@@ -197,6 +201,8 @@ pub fn next_difficulty(w : Array[Double], d : Double, rating : Int32) -> Double 
 /// - `exp(w[10]·(1-R)) - 1`：R 越低（越接近遗忘）成功回忆带来的增益越大（w[10] ≈ 1.02）
 /// - `w[15]`：Hard 惩罚因子（只在 g==2 乘入，≈ 0.23）
 /// - `w[16]`：Easy 奖励因子（只在 g==4 乘入，≈ 2.99）
+/// 底层公式前置条件：`w` 至少 19 项；调用方负责验证有限性和范围。
+/// 推荐通过 `Fsrs::with_params_checked` 构造调度器。
 pub fn stability_after_success(
   w : Array[Double],
   d : Double,
@@ -237,6 +243,8 @@ pub fn stability_after_success(
 ///
 /// 注意：这条公式**不复用**成功路径，是 FSRS 相对 SM-2 的关键改进之一
 /// ——遗忘不是"把间隔清零"，而是按原记忆强度打折。
+/// 底层公式前置条件：`w` 至少 19 项；调用方负责验证有限性和范围。
+/// 推荐通过 `Fsrs::with_params_checked` 构造调度器。
 pub fn stability_after_lapse(
   w : Array[Double],
   d : Double,
@@ -319,6 +327,8 @@ pub fn interval_days(s : Double, desired_retention : Double) -> Double {
 /// D' 与 S' 都从复习前的状态计算：稳定性使用旧 D，R 使用旧 S。
 /// 参考：fsrs4anki v5.3.0 review 分支将 last_d 传给稳定性更新；
 /// 新 D 只作为返回状态保存，不反馈进同一次 S' 计算。
+/// 底层公式前置条件：`w` 至少 19 项；调用方负责验证有限性和范围。
+/// 推荐通过 `Fsrs::with_params_checked` 构造调度器。
 pub fn step(
   w : Array[Double],
   desired_retention : Double,

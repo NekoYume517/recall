@@ -327,7 +327,7 @@ pub fn Fsrs::with_params_checked(w : Array[Double]) -> Result[Fsrs, String] {
             "权重语义病态（\{xs.length()} 处）：\{msgs.join("；")}",
           )
         }
-        Valid => Ok({ w, desired_retention: 0.9, })
+        Valid => Ok({ w: w.copy(), desired_retention: 0.9, })
       }
   }
 }

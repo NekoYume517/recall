@@ -185,11 +185,12 @@ pub(all) struct Comparison {
   per_card : Array[(String, Double, Double)]
 } derive(@debug.Debug)
 
-pub(all) struct Fsrs {
-  w : Array[Double]
+pub struct Fsrs {
   desired_retention : Double
+  // private fields
 } derive(@debug.Debug)
 pub fn Fsrs::new() -> Self
+pub fn Fsrs::weights(Self) -> Array[Double]
 pub fn Fsrs::with_params(Array[Double]) -> Self
 pub fn Fsrs::with_params_checked(Array[Double]) -> Result[Self, String]
 pub fn Fsrs::with_retention(Double) -> Self

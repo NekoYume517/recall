@@ -199,11 +199,12 @@ EF 更新（每次复习都做，用更新前的 EF 算间隔）:
 **注意：实现 FSRS-5 的公开公式，但参数用给定默认值，不实现训练。**
 
 ```moonbit
-pub(all) struct Fsrs {
-  w : Array[Double]         // 21 个权重，默认用 FSRS-5 官方默认值
+pub struct Fsrs {
+  priv w : Array[Double]   // 实例独占，外部不可读写或直接构造
   desired_retention : Double // 默认 0.9
 }
 
+pub fn Fsrs::weights(self : Fsrs) -> Array[Double] // 独立副本
 pub fn Fsrs::new() -> Fsrs
 pub fn Fsrs::with_params(w : Array[Double]) -> Fsrs
 
@@ -224,6 +225,8 @@ pub fn Fsrs::with_params_checked(w : Array[Double]) -> Result[Fsrs, String]
 
 pub impl Scheduler for Fsrs
 ```
+
+权重封装：请通过构造器创建 `Fsrs`，原先 `.w` 读取迁移为 `.weights()`。接收数组的构造器复制输入，快照也可独立修改，不影响调度器。低级公式函数仍接收原始数组，要求至少 19 项且由调用方负责验证。
 
 **`with_params` 与 `with_params_checked` 的分工**：
 

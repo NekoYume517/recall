@@ -5,8 +5,8 @@
 ///|
 test "audit: with_params 负权重退回默认" {
   let f = Fsrs::with_params([-1.0, -1.0])
-  assert_eq(f.w.length(), 21)
-  assert_true(near(f.w[0], 0.40255))
+  assert_eq(f.weights().length(), 21)
+  assert_true(near(f.weights()[0], 0.40255))
 }
 
 // 候选 2：JSONL UTF-8 BOM
@@ -139,8 +139,8 @@ test "audit: with_params 21 项权重原样保留" {
   let w = fsrs_default_w()
   w[0] = 0.5
   let f = Fsrs::with_params(w)
-  assert_eq(f.w.length(), 21)
-  assert_true(near(f.w[0], 0.5))
+  assert_eq(f.weights().length(), 21)
+  assert_true(near(f.weights()[0], 0.5))
 }
 
 ///|
@@ -154,7 +154,7 @@ test "audit: with_params 25 项超长权重也接受（不崩溃）" {
     base
   }
   let f = Fsrs::with_params(w)
-  assert_true(f.w.length() >= 21)
+  assert_true(f.weights().length() >= 21)
   let st = f.review(f.init("c", 0L), Grade::Good, 0L)
   assert_true(st.interval_days >= 1.0)
 }
@@ -163,7 +163,7 @@ test "audit: with_params 25 项超长权重也接受（不崩溃）" {
 test "audit: 全零权重数组不产生 NaN" {
   let zeros = Array::make(21, 0.0)
   let f = Fsrs::with_params(zeros)
-  assert_eq(f.w.length(), 21)
+  assert_eq(f.weights().length(), 21)
   let mut st = f.init("c", 0L)
   let mut now : Timestamp = 0L
   for _i in 0..<10 {

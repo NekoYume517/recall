@@ -140,8 +140,8 @@ test "fsrs: with_retention 修改保持率" {
 ///|
 test "fsrs: with_params 权重不足 19 项时退回默认值" {
   let f = Fsrs::with_params([1.0, 2.0])
-  assert_eq(f.w.length(), 21)
-  assert_true(near(f.w[0], 0.40255))
+  assert_eq(f.weights().length(), 21)
+  assert_true(near(f.weights()[0], 0.40255))
 }
 
 // ---------------------------------------------------------------------------

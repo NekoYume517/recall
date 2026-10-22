@@ -7,8 +7,8 @@
 // 来调用调度算法，不认识任何具体实现。
 //
 // ⚠️ 协作约定（给 recall-engine）：
-//   - `Fsrs` 结构体的**定义在本文件末尾**（最小 stub，只有 API.md 声明的
-//     `w`、`desired_retention` 两个字段 + `new()`）。
+//   - `Fsrs` 结构体的**定义在本文件末尾**（类型与构造器，包含
+//     私有权重、只读目标保持率与构造器）。
 //   - recall-engine 只需在 `src/fsrs.mbt` 里写 `impl Scheduler for Fsrs`、
 //     以及自己的内部公式函数；**不要再定义一次 `struct Fsrs`**，
 //     否则同包内重复定义会编译失败。
@@ -78,15 +78,12 @@ pub trait Scheduler {
 }
 
 ///|
-/// FSRS-5 的状态容器。
+/// FSRS-5 调度器。通过构造器创建，权重由实例独占。
 ///
-/// **这是最小 stub（仅类型 + 构造器）**：字段严格按 API.md 第 3.2 节，
-/// 公式与 `impl Scheduler for Fsrs` 由 `src/fsrs.mbt`（recall-engine）提供。
-/// 放在这里的唯一原因是 `AnyScheduler` 需要引用这个类型；
-/// 等 fsrs.mbt 交付后，本段**不需要删**——只要 fsrs.mbt 不再重复
-/// 定义 `struct Fsrs`，两边就能共存。
-pub(all) struct Fsrs {
-  w : Array[Double] // 21 个权重，默认用 FSRS-5 官方值
+/// 权重不公开，避免短数组直构或外部修改导致公式越界。
+/// 使用 `weights()` 读取独立快照；目标保持率是只读标量。
+pub struct Fsrs {
+  priv w : Array[Double]
   desired_retention : Double // 默认 0.9
 } derive(Debug)
 
@@ -117,8 +114,14 @@ pub fn Fsrs::with_params(w : Array[Double]) -> Fsrs {
   if w.length() < 19 {
     Fsrs::new()
   } else {
-    { w, desired_retention: 0.9, }
+    { w: w.copy(), desired_retention: 0.9, }
   }
+}
+
+///|
+/// 权重快照。修改或清空返回的数组不会影响调度器。
+pub fn Fsrs::weights(self : Fsrs) -> Array[Double] {
+  self.w.copy()
 }
 
 ///|

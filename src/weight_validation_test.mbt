@@ -138,7 +138,7 @@ test "wval: with_params_checked 成功时权重原样保留" {
   w[2] = 3.5 // 合法微调
   match Fsrs::with_params_checked(w) {
     Ok(f) => {
-      assert_true((f.w[2] - 3.5).abs() < 0.000000001)
+      assert_true((f.weights()[2] - 3.5).abs() < 0.000000001)
       assert_true((f.desired_retention - 0.9).abs() < 0.000000001)
     }
     Err(msg) => fail("合法权重不应被拒: \{msg}")
