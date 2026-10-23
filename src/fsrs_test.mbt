@@ -553,6 +553,24 @@ test "fsrs: 间隔公式自校验 I(S, 0.9) 未取整前恒等于 S" {
 }
 
 ///|
+test "fsrs: interval_days(S,0.9)=S 只在 S ∈ [1, 36500] 内成立" {
+  // 恒等式是「未取整且未被夹取」时的结果。实现最后一步会把结果
+  // 四舍五入并夹到 [1, max_interval_days()]：
+  //   - S < 1：0 天间隔没有意义，夹到 1 天（如 0.1 → 1）
+  //   - S > 36500：夹到 100 年上限（如 40000 → 36500），防 Int64 回绕
+  // 区间内取整数 S 时精确相等；这正是 docs/DEMO.md 与 API.md 的契约。
+  for s in [1.0, 2.0, 30.0, 365.0, 36000.0] {
+    assert_eq(interval_days(s, 0.9), s)
+  }
+  assert_eq(interval_days(36500.0, 0.9), 36500.0)
+  assert_eq(interval_days(0.1, 0.9), 1.0)
+  assert_eq(interval_days(40000.0, 0.9), 36500.0)
+  // 夹取后仍为正、不超过上限（值是安全的，不是恒等式的结果）
+  assert_true(interval_days(1.0e18, 0.9) <= max_interval_days())
+  assert_eq(interval_days(1.0e18, 0.9), max_interval_days())
+}
+
+///|
 test "fsrs: 间隔至少 1 天" {
   assert_eq(interval_days(0.0, 0.9), 1.0)
   assert_eq(interval_days(0.01, 0.9), 1.0)
