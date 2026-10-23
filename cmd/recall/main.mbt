@@ -1103,7 +1103,8 @@ fn cmd_curve(args : Args) -> Int32 {
 ///|
 /// `recall advice` — 搜索「窗口内积压不超标的最大每日新卡数」。
 ///
-/// 二分搜索复用模拟器，每次 probe 是一次完整模拟，结果确定性可复现。
+/// 从上界向下线性扫描（积压对 new_per_day 非单调，不能二分），
+/// 每次 probe 是一次完整模拟，结果确定性可复现。
 fn cmd_advice(args : Args) -> Int32 {
   let sched_name = args.get("scheduler", "fsrs")
   if !@lib.scheduler_name_valid(sched_name) {
