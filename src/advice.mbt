@@ -10,10 +10,19 @@
 // （固定种子、逐字节可复现）让搜索结果本身也可复现——同样的配置
 // 每次给出同一个建议，这是"建议"区别于"猜测"的底线。
 //
-// 搜索策略：**二分**。new_per_day 与最终积压单调相关（每天多学一张卡
-// 不会让最终积压更少——这是构造保证：多学的卡只会增加到期量，不会
-// 减少已有卡的复习量），所以可以二分。单调性由 `advice_monotonic`
-// 测试在多个配置下验证。
+// 搜索策略：**从搜索上界向下线性扫描**，返回第一个达标的 n。
+//
+// 为什么不是二分：积压对 new_per_day **不是单调的**。旧注释曾断言
+// 「new_per_day 与最终积压单调相关（这是构造保证）」，该前提已被实测证伪：
+// 评分策略按真实 elapsed 抽样，种子固定但随机流被 n 改变的路径是非线性的，
+// 于是曲线出现回落。实测反例（90 天 / 上限 150 / optimistic）：
+//   f(43)=422, f(44)=526, f(45)=465, f(46)=522
+// 二分在 44 就被挡住，返回 43 并声称「第 44 张会升到 526 超出目标」，
+// 而 45 其实达标。另一处回落：f(55)=480 → f(56)=424（上限 200）。
+//
+// 因此搜索必须逐个检查：从上界往下，第一个 f(n) <= target 的 n 就是真实
+// 最大值（所有更大的 n 都已验证超标）。成本最坏 O(hi) 次模拟，命中即停。
+// 可复现性不受影响：每次 probe 都是同一配置的确定性模拟。
 
 // ---------------------------------------------------------------------------
 // 建议请求与结果
@@ -116,7 +125,7 @@ pub fn probe_final_backlog(
 }
 
 // ---------------------------------------------------------------------------
-// 二分搜索
+// 线性扫描
 // ---------------------------------------------------------------------------
 
 ///|
@@ -128,8 +137,13 @@ pub fn probe_final_backlog(
 ///   - 上界 hi = review_limit（0 = 无限时取 500）：新卡占用复习配额，
 ///     学新卡的速度不可能超过复习能力，超过的部分没有意义。
 ///
-/// 复杂度：O(log hi) 次模拟。每次模拟 O(days × cards)。
-/// 90 天 / 上限 500 时约 9 次模拟，秒级完成。
+/// 搜索方式：**从 hi 向下逐张扫描**，返回第一个达标的 n。积压对
+/// new_per_day 非单调（见文件顶部反例），所以不能二分，也不能跳步：
+/// 跳过任何一个 n 都可能漏掉上方那个真实最大值。
+///
+/// 复杂度：最坏 O(hi) 次模拟，每次模拟 O(days × cards)；命中即停，
+/// 上界附近就有解时只需几次。90 天 / 上限 150 / 目标 500 时实测
+/// 共 107 次模拟（1 次 f(0) + 1 次 f(hi) + 105 次扫描）。
 ///
 /// **可复现承诺**：同样输入（含种子）永远给同样输出——模拟器确定性
 /// 传递到这一层。测试 `advice_deterministic` 锁定。
@@ -150,10 +164,6 @@ pub fn load_advice(s : AnyScheduler, req : AdviceRequest) -> AdviceResult {
       summary: "即使每天 0 张新卡，\{req.days} 天后仍有 \{lo_backlog} 张积压（目标 \{req.target_backlog}）——存量太大，先提高复习上限或延长窗口",
     }
   }
-  // 二分：找最大的 new_per_day 使 final_backlog <= target
-  // 不变量：f(0) 达标（刚验证过），f(hi+1) 不达标或 hi 是上界
-  let mut lo = 0
-  let mut cur = hi
   // 先看上界本身是否达标：达标则直接返回上界（不用搜）
   let hi_backlog = probe_backlog(s, req, hi)
   if hi_backlog <= req.target_backlog {
@@ -168,31 +178,37 @@ pub fn load_advice(s : AnyScheduler, req : AdviceRequest) -> AdviceResult {
       summary: "\{req.days} 天窗口内即使每天 \{hi} 张新卡（复习上限），积压也只有 \{hi_backlog}（目标 \{req.target_backlog}）——容量绰绰有余，可以调大 review_limit 或缩短窗口",
     }
   }
-  // 标准二分：保持 f(lo) 达标、f(cur) 不达标，收敛到 lo = cur - 1
-  while cur - lo > 1 {
-    let mid = (lo + cur) / 2
-    if probe_backlog(s, req, mid) <= req.target_backlog {
-      lo = mid
-    } else {
-      cur = mid
+  // 线性扫描：hi 已确认超标，从 hi-1 往下找第一个达标点。
+  // `next_backlog` 始终保存「上一个（更大的）n」的积压，即 f(candidate+1)。
+  let mut candidate = hi - 1
+  let mut next_backlog = hi_backlog
+  while candidate > 0 {
+    let backlog = probe_backlog(s, req, candidate)
+    if backlog <= req.target_backlog {
+      // 更大的 n 全部已实测超标，所以这就是真实最大值
+      let sim = simulate(s, req.to_config(candidate))
+      return {
+        new_per_day: candidate,
+        simulation: sim,
+        final_backlog: backlog,
+        next_step_backlog: Some(next_backlog),
+        search_lo: 0,
+        search_hi: hi,
+        summary: "每天 \{candidate} 张新卡可在 \{req.days} 天内把积压控制在 \{backlog}（目标 \{req.target_backlog}）；第 \{candidate + 1} 张会升到 \{next_backlog}",
+      }
     }
+    next_backlog = backlog
+    candidate = candidate - 1
   }
-  // lo 达标、lo+1 不达标
-  let final_backlog = probe_backlog(s, req, lo)
-  let next_backlog = probe_backlog(s, req, lo + 1)
-  let sim = simulate(s, req.to_config(lo))
-  let summary = if lo == 0 {
-    "每天最多 0 张新卡：多学 1 张就会让积压（\{next_backlog}）超过目标 \{req.target_backlog}"
-  } else {
-    "每天 \{lo} 张新卡可在 \{req.days} 天内把积压控制在 \{final_backlog}（目标 \{req.target_backlog}）；第 \{lo + 1} 张会升到 \{next_backlog}"
-  }
+  // 走到这里：f(0) 达标（入口已验证），f(1)（= next_backlog）超标
+  let sim = simulate(s, req.to_config(0))
   {
-    new_per_day: lo,
+    new_per_day: 0,
     simulation: sim,
-    final_backlog,
+    final_backlog: lo_backlog,
     next_step_backlog: Some(next_backlog),
     search_lo: 0,
     search_hi: hi,
-    summary,
+    summary: "每天最多 0 张新卡：多学 1 张就会让积压（\{next_backlog}）超过目标 \{req.target_backlog}",
   }
 }
