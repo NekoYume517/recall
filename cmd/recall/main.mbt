@@ -1020,32 +1020,60 @@ fn cmd_curve(args : Args) -> Int32 {
   println("")
   if curve.length() == 0 {
     // R5：空结果有两种原因，混在一句里会误导——「每卡只有一次复习」
-    // 和「日志为空」是不同的问题。另外说明分桶语义：elapsed_days 恰好
-    // 等于桶上界的样本会落入下一桶（floor 除法），边界归属有 ±1 桶宽
-    // 的模糊，这是与 compute_stats（直接对事件算）数值不同的原因之一。
+    // 和「日志为空」是不同的问题。另外说明分桶语义：每个桶是左闭右开
+    // `[lo, hi)`（最后一桶闭区间覆盖最大值），所以 elapsed 恰好等于
+    // 桶下界的样本归入该桶。与 compute_stats（直接对事件算）数值不同
+    // 的原因是按桶聚合，不是边界归属模糊。
     println(
       "（保持率曲线为空：分桶需要同卡多次复习产生的正间隔样本；",
     )
     println(
-      "  日志为空、每卡仅一次复习、或所有间隔都落在最后一个桶边界之后时结果为空）",
+      "  日志为空、每卡仅一次复习时结果为空。桶为左闭右开 [lo, hi)，",
     )
+    println("  最后一桶为闭区间以覆盖最大间隔）")
     return 0
   }
+  // 标签精度跟着桶宽走：桶宽 < 1 天时 1 位小数会把 [x, x+w) 打印成
+  // 同一个数（如 10000 桶时每桶只有 0.018 天），看起来像标签写错。
+  let width0 = curve[0].1 - curve[0].0
+  let digits = if width0 >= 1.0 {
+    1
+  } else if width0 >= 0.1 {
+    2
+  } else if width0 >= 0.01 {
+    3
+  } else {
+    4
+  }
+  let labels : Array[String] = []
+  for row in curve {
+    labels.push(
+      "[" + fmt_float(row.0, digits) + ", " + fmt_float(row.1, digits) + ")",
+    )
+  }
+  let mut label_width = 16
+  for label in labels {
+    if label.length() + 1 > label_width {
+      label_width = label.length() + 1
+    }
+  }
   println(
-    pad_right("间隔上界(天)", 16) + pad_left("保持率", 10) + "  曲线",
+    pad_right("间隔区间(天)", label_width) +
+    pad_left("保持率", 10) +
+    "  曲线",
   )
   println(hr(62))
-  for row in curve {
-    let cells = (row.1 * 30.0).to_int()
+  for i, row in curve {
+    let cells = (row.2 * 30.0).to_int()
     let sb = StringBuilder()
-    let mut i = 0
-    while i < cells {
+    let mut j = 0
+    while j < cells {
       sb.write_string("#")
-      i = i + 1
+      j = j + 1
     }
     println(
-      pad_right("< " + fmt_float(row.0, 1), 16) +
-      pad_left(fmt_pct(row.1), 10) +
+      pad_right(labels[i], label_width) +
+      pad_left(fmt_pct(row.2), 10) +
       "  " +
       sb.to_string(),
     )
@@ -1054,10 +1082,10 @@ fn cmd_curve(args : Args) -> Int32 {
   let mut prev = 2.0
   let mut monotone = true
   for row in curve {
-    if row.1 > prev {
+    if row.2 > prev {
       monotone = false
     }
-    prev = row.1
+    prev = row.2
   }
   println("")
   if monotone {

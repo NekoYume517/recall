@@ -472,15 +472,21 @@ pub(all) struct CardStats {
 }
 
 pub fn compute_stats(log : ReviewLog) -> Array[CardStats]
-pub fn retention_curve(log : ReviewLog, buckets : Int) -> Array[(Double, Double)]
-  // (elapsed_days_bucket, retention_rate)
+pub fn retention_curve(
+  log : ReviewLog,
+  buckets : Int,
+) -> Array[(Double, Double, Double)]
+  // (桶下界天数, 桶上界天数, retention_rate)，桶为左闭右开 [lo, hi)；
+  // 最后一桶闭区间 [lo, hi]，因为 elapsed == max 会被夹进末桶
 ```
 
 `compute_stats` 与 `retention_curve` 按卡片分组并稳定按复习时间排序，
 共用同一个间隔口径：优先采用日志明确记录的正 `elapsed_days`，否则仅由同卡
 前驱回推。首条事件的正间隔可代表截断日志中的既有学习历史；首条零间隔
 没有前驱，不计入间隔样本。同刻重复复习的零间隔有效，全部样本为零时曲线
-返回一个上界为 0 的桶。经验保持率受有限样本影响，不保证单调。
+返回一个 `[0, 0]` 的桶。返回值同时给出每个桶的上下界，调用方打印标签时
+必须按区间 `[lo, hi)` 呈现，不能只取上界写成 `< hi`（那会把边界样本
+显示到高一档的标签下）。经验保持率受有限样本影响，不保证单调。
 
 `overall_stats(rows)` 接收 `compute_stats` 生成的卡片统计。`mean_interval`
 是有间隔样本的卡片均值的等权平均，判据为 `reviews > 1 || mean_interval > 0`：

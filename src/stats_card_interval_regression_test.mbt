@@ -16,7 +16,7 @@ test "curve review regression: interleaving and file order cannot change samples
   let shuffled = ReviewLog::{ events: [a1, b1, a0, b0], }
   let curve = retention_curve(ordered, 2)
   assert_eq(curve, retention_curve(shuffled, 2))
-  assert_eq(curve, [(5.0, 1.0), (10.0, 0.0)])
+  assert_eq(curve, [(0.0, 5.0, 1.0), (5.0, 10.0, 0.0)])
   let stats = compute_stats(shuffled)
   assert_eq(stats[0].mean_interval, 10.0)
   assert_eq(stats[1].mean_interval, 1.0)
@@ -27,7 +27,7 @@ test "curve review regression: observed first interval has the same stats meanin
   let log = ReviewLog::{ events: [ReviewEvent::new("A", 0L, 0L, Hard, 5.0)], }
   assert_eq(compute_stats(log)[0].mean_interval, 5.0)
   assert_eq(overall_stats(compute_stats(log)).mean_interval, 5.0)
-  assert_eq(retention_curve(log, 1), [(5.0, 1.0)])
+  assert_eq(retention_curve(log, 1), [(0.0, 5.0, 1.0)])
 }
 
 ///|
@@ -35,5 +35,5 @@ test "curve review regression: repeated zero elapsed reviews remain observations
   let log = ReviewLog::new()
   log.push(ReviewEvent::new("A", 0L, 0L, Good, 0.0))
   log.push(ReviewEvent::new("A", 0L, 0L, Again, 0.0))
-  assert_eq(retention_curve(log, 10), [(0.0, 0.0)])
+  assert_eq(retention_curve(log, 10), [(0.0, 0.0, 0.0)])
 }

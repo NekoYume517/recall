@@ -168,8 +168,8 @@ test "curve: bucket 上界严格递增" {
   assert_true(c.length() > 0)
   let mut prev = 0.0
   for row in c {
-    assert_true(row.0 > prev)
-    prev = row.0
+    assert_true(row.1 > prev)
+    prev = row.1
   }
 }
 
@@ -177,8 +177,8 @@ test "curve: bucket 上界严格递增" {
 test "curve: 保持率落在 [0,1]" {
   let c = retention_curve(stats_log(), 4)
   for row in c {
-    assert_true(row.1 >= 0.0)
-    assert_true(row.1 <= 1.0)
+    assert_true(row.2 >= 0.0)
+    assert_true(row.2 <= 1.0)
   }
 }
 
@@ -227,16 +227,16 @@ test "curve: 单调构造样本保留其下降趋势" {
   assert_true(c.length() >= 3)
   let mut prev = 1.1
   for row in c {
-    assert_true(row.1 <= prev)
-    prev = row.1
+    assert_true(row.2 <= prev)
+    prev = row.2
   }
 }
 
 ///|
 test "curve: 短间隔桶的保持率严格高于长间隔桶" {
   let c = retention_curve(monotone_log(), 10)
-  let first = c[0].1
-  let last = c[c.length() - 1].1
+  let first = c[0].2
+  let last = c[c.length() - 1].2
   assert_true(first > last)
 }
 
@@ -255,7 +255,7 @@ test "curve: 全对日志的保持率恒为 1" {
   let c = retention_curve(log, 5)
   assert_true(c.length() > 0)
   for row in c {
-    assert_true(near(row.1, 1.0))
+    assert_true(near(row.2, 1.0))
   }
 }
 
@@ -274,7 +274,7 @@ test "curve: 全忘日志的保持率恒为 0" {
   let c = retention_curve(log, 5)
   assert_true(c.length() > 0)
   for row in c {
-    assert_true(near(row.1, 0.0))
+    assert_true(near(row.2, 0.0))
   }
 }
 
@@ -283,7 +283,7 @@ test "curve: buckets=1 时只有一个桶，覆盖全部样本" {
   let c = retention_curve(monotone_log(), 1)
   assert_eq(c.length(), 1)
   // 通过 10 + 5 + 1 = 16，总 30
-  assert_true(near(c[0].1, 16.0 / 30.0))
+  assert_true(near(c[0].2, 16.0 / 30.0))
 }
 
 ///|
@@ -308,7 +308,7 @@ test "curve: 最大 elapsed 落在最后一桶（桶上界覆盖它）" {
   log.push(ReviewEvent::new("x", 0L, 0L, Good, 0.0))
   log.push(ReviewEvent::new("x", 86400L * 30L, 0L, Good, 30.0))
   let c = retention_curve(log, 3)
-  let last_upper = c[c.length() - 1].0
+  let last_upper = c[c.length() - 1].1
   assert_true(last_upper >= 30.0 - 0.000000001)
 }
 
@@ -320,7 +320,7 @@ test "curve: Hard 计入成功（与 is_recalled 一致）" {
   let c = retention_curve(log, 1)
   assert_eq(c.length(), 1)
   // 2 个样本，1 个成功 → 0.5
-  assert_true(near(c[0].1, 0.5))
+  assert_true(near(c[0].2, 0.5))
 }
 
 ///|
@@ -338,8 +338,8 @@ test "curve: 单调性在真实示例日志上也成立" {
   assert_true(c.length() > 0)
   let mut prev = 1.1
   for row in c {
-    assert_true(row.1 <= prev)
-    prev = row.1
+    assert_true(row.2 <= prev)
+    prev = row.2
   }
 }
 
@@ -361,7 +361,7 @@ test "curve: elapsed=0 但时间戳差非零的样本不被静默丢弃" {
   // 5 个间隔为 1 天的样本都进入曲线（不为空）
   assert_true(c.length() >= 1)
   // 末桶包含所有 5 个样本，保持率应为 1.0
-  assert_true(near(c[c.length() - 1].1, 1.0))
+  assert_true(near(c[c.length() - 1].2, 1.0))
 }
 
 ///|
@@ -379,7 +379,7 @@ test "curve: 与 compute_stats 同口径（elapsed=0 时间戳回推）" {
   // curve 也应收到这 5 个样本（按时间戳回推），且保持率与 stats 一致为 1.0
   let c = retention_curve(log, 3)
   assert_true(c.length() >= 1)
-  assert_true(near(c[c.length() - 1].1, 1.0))
+  assert_true(near(c[c.length() - 1].2, 1.0))
   // 与 compute_stats 的保持率一致：全部成功 → 1.0
   assert_true(near(rows[0].retention_rate, 1.0))
 }
@@ -401,4 +401,43 @@ test "overall: interval sample presence differs from a zero mean" {
   let no_sample = ReviewLog::new()
   no_sample.push(ReviewEvent::new("new", 0L, 0L, Good, 0.0))
   assert_eq(overall_stats(compute_stats(no_sample)).mean_interval, 0.0)
+}
+
+///|
+// 回归（RC-2）：桶是左闭右开 [lo, hi)，标签必须与桶内容一致。
+// 旧实现用 floor(iv/width) 归桶（正确），却把 width*(i+1) 当作标签打印成
+// "< hi"，读起来等价于「所有小于 hi 的样本」；elapsed 恰好等于某桶下界的
+// 样本于是出现在比直觉高一档的标签下（见 docs/DEMO.md 的曲线样例）。
+// 修复后返回值是 (下界, 上界, 保持率)，标签直接由真实区间生成。
+test "curve: 桶边界样本落在 [lo, hi) 且标签给出真实上下界" {
+  let log = ReviewLog::new()
+  // 每张卡一条 0 天首复习 + 一条真实间隔（5/10/20/30 天），
+  // max_elapsed = 30、3 桶 → 桶宽 10，两个样本恰好落在桶边界上。
+  let specs : Array[(String, Double, Grade)] = [
+    ("p", 5.0, Good),
+    ("q", 10.0, Again),
+    ("r", 20.0, Good),
+    ("s", 30.0, Good),
+  ]
+  for spec in specs {
+    let (cid, days, grade) = spec
+    log.push(ReviewEvent::new(cid, 0L, 0L, Good, 0.0))
+    log.push(
+      ReviewEvent::new(cid, (days * 86400.0).to_int64(), 0L, grade, days),
+    )
+  }
+  let c = retention_curve(log, 3)
+  // [0,10) 只有 5 天样本且答对；[10,20) 只有 10 天样本且遗忘；
+  // [20,30] 有 20、30 天两个样本且都答对。
+  assert_eq(c.length(), 3)
+  assert_eq(c[0], (0.0, 10.0, 1.0))
+  assert_eq(c[1], (10.0, 20.0, 0.0))
+  assert_eq(c[2], (20.0, 30.0, 1.0))
+  // 边界样本归属：elapsed == 桶下界的样本在**该桶**里，不在上一桶。
+  assert_true(c[1].0 <= 10.0 && c[1].1 > 10.0)
+  assert_true(c[2].0 <= 20.0 && c[2].1 > 20.0)
+  // 相邻桶首尾相接，标签不会跳档。
+  for i = 0; i < c.length() - 1; i = i + 1 {
+    assert_eq(c[i].1, c[i + 1].0)
+  }
 }

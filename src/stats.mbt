@@ -105,19 +105,26 @@ pub fn compute_stats(log : ReviewLog) -> Array[CardStats] {
 
 ///|
 /// 保持率曲线：把 `elapsed_days` 分成 `buckets` 个等宽桶，
-/// 每桶返回 `(桶上界天数, 该桶的保持率)`。
+/// 每桶返回 `(桶下界天数, 桶上界天数, 该桶的保持率)`。
+///
+/// 分桶语义：**左闭右开 `[lo, hi)`**，`bi = floor(iv / width)`。
+/// 返回值同时给出上下界，标签才与桶内容一致——旧实现只回上界，
+/// CLI 把它打印成 `< hi`，读起来像「所有小于 hi 的样本」，于是
+/// elapsed 恰好等于某桶下界的样本会显示在比直觉高一档的标签下。
+/// `elapsed == max_elapsed` 时除法得 `n_buckets`，夹进最后一桶，
+/// 因此最后一桶实际是 `[lo, hi]`（闭区间，覆盖最大值）。
 ///
 /// 设计细节：
 /// - 同卡无前驱且 elapsed_days=0 的事件不参与；显式正间隔仍有效。
-/// - 重复复习的零间隔参与统计；全部间隔为零时返回上界为 0 的一个桶。
+/// - 重复复习的零间隔参与统计；全部间隔为零时返回一个 `[0, 0]` 的桶。
 /// - 桶宽 = 最大 elapsed / buckets，让最后一桶恰好覆盖最大值。
-/// - 只返回**非空桶**，按桶上界升序——空桶画不出曲线，掺进去只会误导。
+/// - 只返回**非空桶**，按桶下界升序——空桶画不出曲线，掺进去只会误导。
 ///
 /// 这是观测保持率，有限样本不保证单调性。
 pub fn retention_curve(
   log : ReviewLog,
   buckets : Int32,
-) -> Array[(Double, Double)] {
+) -> Array[(Double, Double, Double)] {
   let n_buckets = if buckets < 1 { 1 } else { buckets }
   // 先按卡片和时间提取一次样本，分桶时不再重复推导前驱。
   let samples : Array[(Double, Grade)] = []
@@ -154,7 +161,7 @@ pub fn retention_curve(
         successes = successes + 1
       }
     }
-    return [(0.0, successes.to_double() / samples.length().to_double())]
+    return [(0.0, 0.0, successes.to_double() / samples.length().to_double())]
   }
   // --- 2. 定桶宽 ---
   let width = max_elapsed / n_buckets.to_double()
@@ -177,12 +184,14 @@ pub fn retention_curve(
     }
   }
   // --- 3. 组装非空桶 ---
-  let out : Array[(Double, Double)] = []
+  let out : Array[(Double, Double, Double)] = []
   let mut i = 0
   while i < n_buckets {
     if totals[i] > 0 {
+      // 上下界都用同一个 width 乘出来，相邻桶严格首尾相接
+      let lower = safe_width * i.to_double()
       let upper = safe_width * (i + 1).to_double()
-      out.push((upper, passes[i].to_double() / totals[i].to_double()))
+      out.push((lower, upper, passes[i].to_double() / totals[i].to_double()))
     }
     i = i + 1
   }

@@ -70,7 +70,7 @@ pub fn replay(ReviewLog, AnyScheduler) -> ReplayResult
 
 pub fn[T : Scheduler] replay_with(ReviewLog, T) -> ReplayResult
 
-pub fn retention_curve(ReviewLog, Int32) -> Array[(Double, Double)]
+pub fn retention_curve(ReviewLog, Int32) -> Array[(Double, Double, Double)]
 
 pub fn retrievability_with(Array[Double], Double, Double) -> Double
 
