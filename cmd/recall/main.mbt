@@ -147,6 +147,52 @@ fn parse_int_loose(s : String) -> Int32? {
 }
 
 ///|
+/// 解析 64 位整数。与 `parse_int_loose` 同一套「探测式」规则，
+/// 但结果允许落在 Int64 全域（±(2^63-1)）——`--seed` 用它解析，
+/// 否则 `--seed 3000000000` 会被 Int32 解析误报非法。
+/// 累加用 Int64 承载，溢出预检 `acc > (max - dg) / 10`（等收完再判
+/// 会被回绕吞掉错误）；幅值 2^63（即字面 -9223372036854775808）
+/// 无法在 Int64 累加器中表达，按越界拒绝——种子取到端点没有实际意义。
+fn parse_int64_loose(s : String) -> Int64? {
+  let t = s.trim_space().to_owned()
+  if t.length() == 0 {
+    return None
+  }
+  let mut i = 0
+  let mut neg = false
+  if t[0] == '-' {
+    neg = true
+    i = 1
+  } else if t[0] == '+' {
+    i = 1
+  }
+  if i >= t.length() {
+    return None
+  }
+  let limit : Int64 = 9223372036854775807L
+  let mut acc : Int64 = 0L
+  while i < t.length() {
+    let dg = digit_of(t[i])
+    if dg < 0 {
+      return None
+    }
+    // 溢出预检：acc*10+dg > limit ⟺ acc > (limit-dg)/10（整数除法）
+    if acc > (limit - dg.to_int64()) / 10L {
+      return None
+    }
+    acc = acc * 10L + dg.to_int64()
+    i = i + 1
+  }
+  if neg {
+    // -2^63 是唯一合法的负下界；acc <= 2^63-1 时取反安全，
+    // 唯一例外 2^63-1 取反得 -(2^63-1)，仍合法，故无需额外检查。
+    Some(-acc)
+  } else {
+    Some(acc)
+  }
+}
+
+///|
 /// 解析浮点。支持 `1`、`1.5`、`-0.25`、`+2.`。
 fn parse_double_loose(s : String) -> Double? {
   let t = s.trim_space().to_owned()
@@ -333,11 +379,12 @@ fn usage_text() -> String {
     "  recall stats    --log FILE", "  recall curve    --log FILE [--buckets 10]",
     "", "选项:", "  --log            复习日志路径 (JSONL, 每行一个事件)",
     "  --scheduler      调度器: sm2 | fsrs | leitner", "  --a / --b        compare 的左右两侧调度器",
-    "  --days           模拟天数 (默认 90)", "  --new-per-day    每天新增卡片数 (默认 20)",
+    "  --days           模拟天数 (默认 90, 上限 100000)", "  --new-per-day    每天新增卡片数 (默认 20)",
     "  --review-limit   每天复习上限, 0 表示不限 (默认 200)", "  --policy         评分策略: optimistic | realistic | pessimistic (默认 realistic)",
-    "  --buckets        保持率曲线分桶数 (默认 10)", "  --retention      目标保持率 (默认 0.9)",
-    "  --target-backlog advice 的积压目标, 张 (默认 0 = 清零)", "  --seed           模拟的伪随机种子 (默认 20240101)",
-    "  --json           以 JSON 输出 (仅 replay)", "  --anki           以 Anki 文本导入格式(TSV)输出最终状态 (仅 replay)",
+    "  --buckets        保持率曲线分桶数 (默认 10, 上限 10000)", "  --retention      目标保持率 (默认 0.9, fsrs 有效区间 [0.5,0.99], 越界夹到边界)",
+    "  --target-backlog advice 的积压目标, 张 (默认 0 = 清零)", "  --seed           模拟的伪随机种子 (默认 20240101, 64 位整数)",
+    "  --json           以 JSON 输出 (仅 replay, 与 --anki 同给时被忽略)",
+    "  --anki           以 Anki 文本导入格式(TSV)输出最终状态 (仅 replay, 优先于 --json)",
     "", "退出码: 0 成功 / 1 数据错误 / 2 用法错误", "",
   ]
   let sb = StringBuilder()
@@ -346,6 +393,73 @@ fn usage_text() -> String {
     sb.write_string("\n")
   }
   sb.to_string()
+}
+
+// ---------------------------------------------------------------------------
+// 参数生效值/守卫（对抗性审计 P3：打印值必须等于生效值）
+// ---------------------------------------------------------------------------
+
+///|
+/// `--retention` 的**生效值**：fsrs 会被 `Fsrs::with_retention`
+/// 夹到 [0.5,0.99]、无效值回退 0.9（scheduler.mbt），其它调度器
+/// 没有该参数、原样透传。打印参数行前先过这里，保证「打印值=生效值」。
+fn effective_retention(sched_name : String, requested : Double) -> Double {
+  if sched_name != "fsrs" {
+    return requested
+  }
+  if requested.is_nan() || requested <= 0.0 || requested >= 1.0 {
+    0.9
+  } else if requested < 0.5 {
+    0.5
+  } else if requested > 0.99 {
+    0.99
+  } else {
+    requested
+  }
+}
+
+///|
+/// `--retention` 请求值与生效值不一致时的提示行；一致时返回空串。
+/// 复现 `with_retention` 的夹取逻辑而不是调用它——那条路径在 lib 里，
+/// 这里只负责把同一决策如实告诉用户。
+fn retention_hint(sched_name : String, requested : Double) -> String {
+  if sched_name != "fsrs" {
+    return ""
+  }
+  let eff = effective_retention(sched_name, requested)
+  if eff == requested {
+    return ""
+  }
+  if requested.is_nan() || requested <= 0.0 || requested >= 1.0 {
+    "提示: --retention \{fmt_float(requested, 2)} 无效（合法区间 (0,1)），已按默认 0.9 生效"
+  } else {
+    "提示: --retention \{fmt_float(requested, 2)} 超出 [0.5,0.99]，已按 \{fmt_float(eff, 2)} 生效"
+  }
+}
+
+///|
+/// `--days` 的量级守卫：负数非法；比照 `--buckets` 的 >10000 上限思路，
+/// 这里上限 100000（simulate 是 O(days×卡片) 的模拟，天文天数 =
+/// 天文运行时间与输出行数）。合法返回空串，非法返回错误消息。
+fn days_range_error(days : Int32) -> String {
+  if days < 0 {
+    return "用法错误: --days 必须非负"
+  }
+  if days > 100000 {
+    return "用法错误: --days 必须 <= 100000（模拟成本与天数十万倍成正比），得到 \{days}"
+  }
+  ""
+}
+
+///|
+/// replay 的 `--anki` 与 `--json` 同给时，`--json` 分支永远走不到
+/// （anki 在前并 return）。不改变「按 --anki 输出」的优先级，
+/// 但补一行提示让用户知道 --json 被忽略了。
+fn replay_conflict_hint(has_anki : Bool, has_json : Bool) -> String {
+  if has_anki && has_json {
+    return "提示: --anki 与 --json 同时给出，按 --anki 输出（--json 被忽略）"
+  }
+  ""
 }
 
 // ---------------------------------------------------------------------------
@@ -449,6 +563,10 @@ fn cmd_replay(args : Args) -> Int32 {
   }
   let s = @lib.AnyScheduler::by_name(sched_name)
   let res = @lib.replay(log, s)
+  let conflict = replay_conflict_hint(args.has("anki"), args.has("json"))
+  if conflict.length() > 0 {
+    println(conflict)
+  }
   if args.has("anki") {
     // Anki 文本导入格式（TSV）：File > Import 直接可用
     let states : Array[@lib.CardState] = []
@@ -827,16 +945,18 @@ fn cmd_simulate(args : Args) -> Int32 {
   let seed = match args.get_opt("seed") {
     None => 20240101L
     Some(v) =>
-      match parse_int_loose(v) {
-        Some(n) => n.to_int64()
+      match parse_int64_loose(v) {
+        Some(n) => n
         None => {
           println("用法错误: --seed 需要一个整数，得到 '\{v}'")
           return 2
         }
       }
   }
-  if days < 0 {
-    println("用法错误: --days 必须非负")
+  // 量级守卫：负数与天文天数都在这里拦下
+  let days_err = days_range_error(days)
+  if days_err.length() > 0 {
+    println(days_err)
     return 2
   }
   if new_per_day < 0 {
@@ -856,7 +976,8 @@ fn cmd_simulate(args : Args) -> Int32 {
     seed,
   }
   // R1 修复：retention 现在真正传给调度器。SM-2/Leitner 没有这个参数
-  // （算法局限），此时如实告知而不是沉默地忽略。
+  // （算法局限），此时如实告知而不是沉默地忽略。fsrs 越界被夹时，
+  // 参数行打印**生效值**并附提示行——打印请求值会让用户以为 0.3 生效了。
   let s = @lib.AnyScheduler::by_name_with_retention(
     sched_name, target_retention,
   )
@@ -870,6 +991,11 @@ fn cmd_simulate(args : Args) -> Int32 {
       " 未生效（仅 FSRS 支持）",
     )
   }
+  let retention_hint_line = retention_hint(sched_name, target_retention)
+  if retention_hint_line.length() > 0 {
+    println(retention_hint_line)
+  }
+  let effective_r = effective_retention(sched_name, target_retention)
   let res = @lib.simulate(s, cfg)
   println("模拟: " + s.name() + " / " + policy + " 策略")
   println(
@@ -880,7 +1006,7 @@ fn cmd_simulate(args : Args) -> Int32 {
     " 张, 复习上限 " +
     (if review_limit == 0 { "不限" } else { review_limit.to_string() }) +
     ", 目标保持率 " +
-    fmt_float(target_retention, 2) +
+    fmt_float(effective_r, 2) +
     ", 种子 " +
     seed.to_string(),
   )
@@ -1170,8 +1296,8 @@ fn cmd_advice(args : Args) -> Int32 {
   let seed = match args.get_opt("seed") {
     None => 20240101L
     Some(v) =>
-      match parse_int_loose(v) {
-        Some(n) => n.to_int64()
+      match parse_int64_loose(v) {
+        Some(n) => n
         None => {
           println("用法错误: --seed 需要一个整数，得到 '\{v}'")
           return 2
@@ -1195,6 +1321,14 @@ fn cmd_advice(args : Args) -> Int32 {
     println("用法错误: --days 必须为正")
     return 2
   }
+  // advice 每次 probe 是一次完整模拟（上限 100 次扫描），量级守卫
+  // 与 simulate 同阈值——advice 的成本还要再乘扫描次数。
+  if days > 100000 {
+    println(
+      "用法错误: --days 必须 <= 100000（advice 每次探测都是完整模拟），得到 \{days}",
+    )
+    return 2
+  }
   if review_limit < 0 {
     println("用法错误: --review-limit 必须非负（0 表示不限）")
     return 2
@@ -1213,6 +1347,12 @@ fn cmd_advice(args : Args) -> Int32 {
       " 调度器没有目标保持率参数（算法局限），--retention 未生效（仅 FSRS 支持）",
     )
   }
+  // fsrs 越界夹取的提示与 simulate 同一条路径；参数行打印生效值。
+  let retention_hint_line = retention_hint(sched_name, target_retention)
+  if retention_hint_line.length() > 0 {
+    println(retention_hint_line)
+  }
+  let effective_r = effective_retention(sched_name, target_retention)
   let req : @lib.AdviceRequest = {
     days,
     review_limit,
@@ -1230,7 +1370,9 @@ fn cmd_advice(args : Args) -> Int32 {
     (if review_limit == 0 { "不限" } else { review_limit.to_string() }) +
     ", 积压目标 " +
     target_backlog.to_string() +
-    " 张, 种子 " +
+    " 张, 目标保持率 " +
+    fmt_float(effective_r, 2) +
+    ", 种子 " +
     seed.to_string(),
   )
   println("")
