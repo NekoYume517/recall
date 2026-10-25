@@ -22,11 +22,11 @@ moon version
 
 ```bash
 moon check
-moon test      # 378 个测试
+moon test      # 382 个测试
 moon build --target wasm
 ```
 
-预期：`Total tests: 378, passed: 378, failed: 0.`
+预期：`Total tests: 382, passed: 382, failed: 0.`
 
 ## 二、核心产出：积压预测
 
