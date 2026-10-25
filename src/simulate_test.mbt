@@ -589,7 +589,7 @@ test "lcg: 同种子产生同序列" {
 }
 
 ///|
-test "lcg: lcg_unit 落在 [0,1]" {
+test "lcg: lcg_unit 落在 [0,1)" {
   let mut s : Int64 = 20240101L
   let mut i = 0
   while i < 500 {
@@ -599,6 +599,15 @@ test "lcg: lcg_unit 落在 [0,1]" {
     assert_true(u < 1.0)
     i = i + 1
   }
+}
+
+///|
+test "lcg: lcg_unit 上界严格排除（回归：分母 2^31-1 会产出 1.0）" {
+  // 状态取满量程 2^31-1：旧分母 2147483647.0 恰好得到 1.0，
+  // 违反 [0,1) 的上界承诺；分母改 2^31 后必须严格小于 1。
+  assert_true(lcg_unit(2147483647L) < 1.0)
+  assert_true(lcg_unit(2147483647L) > 0.9999999)
+  assert_true(lcg_unit(0L) == 0.0)
 }
 
 ///|
