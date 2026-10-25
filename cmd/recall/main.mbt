@@ -396,6 +396,22 @@ fn usage_text() -> String {
 }
 
 // ---------------------------------------------------------------------------
+// 保持率曲线标签
+// ---------------------------------------------------------------------------
+
+///|
+/// 曲线桶标签。常规桶是左闭右开 `[lo, hi)`；但全零间隔样本
+/// （retention_curve 的 max_elapsed==0 分支）只有一桶 (0, 0)，
+/// `[0.0, 0.0)` 是数学上的空区间——读者会以为曲线丢了数据。
+/// 此时打闭区间 `[0.0, 0.0]` 并注明语义。
+fn zero_interval_label(row : (Double, Double, Double)) -> String {
+  if row.0 == 0.0 && row.1 == 0.0 {
+    return "[0.0, 0.0]（全部为零间隔）"
+  }
+  "[" + fmt_float(row.0, 1) + ", " + fmt_float(row.1, 1) + ")"
+}
+
+// ---------------------------------------------------------------------------
 // 参数生效值/守卫（对抗性审计 P3：打印值必须等于生效值）
 // ---------------------------------------------------------------------------
 
@@ -1187,9 +1203,14 @@ fn cmd_curve(args : Args) -> Int32 {
   }
   let labels : Array[String] = []
   for row in curve {
-    labels.push(
-      "[" + fmt_float(row.0, digits) + ", " + fmt_float(row.1, digits) + ")",
-    )
+    // 全零间隔的单桶 (0,0) 打成 "[0.0, 0.0)" 会是空区间记号
+    if row.0 == 0.0 && row.1 == 0.0 {
+      labels.push(zero_interval_label(row))
+    } else {
+      labels.push(
+        "[" + fmt_float(row.0, digits) + ", " + fmt_float(row.1, digits) + ")",
+      )
+    }
   }
   let mut label_width = 16
   for label in labels {
