@@ -57,6 +57,21 @@ pub fn Leitner::with_boxes(boxes : Int32) -> Leitner {
 ///|
 /// 盒号（1-based）→ 间隔天数。
 /// 越界的盒号夹到 [1, boxes]，再按 `intervals` 长度兜底。
+///
+/// **上限夹取（RC-2，2026-10-27）**：结果同样夹到 `max_interval_days()`
+/// （100 年）。Leitner 借 `CardState.interval_days` 表达盒间隔，与
+/// SM-2 / FSRS 是同一字段同一语义（见 `types.mbt` 的字段说明），因此
+/// 必须同受上限约束。
+///
+/// 为什么必须夹：`Leitner::with_boxes(n)` 的间隔表是 2 的幂
+/// （1, 2, 4, 8, …），`n >= 17` 时最后一盒就已越界（2^16 = 65536 天）；
+/// `intervals` 又是 `pub(all)` 字段，外部还能直接塞进 1e30。
+/// 旧实现只靠 `add_days` 夹住了 `due`，`interval_days` 裸赋值，于是
+/// 同一个 CardState 里两个字段相差最多 2.7e25 倍：
+///   boxes=20  interval_days=524288 而 due-last_review=36500
+/// 后果是 compare 的 total_interval、stats 的 mean/max_interval、
+/// export_anki_tsv 的 interval_days 列、retrievability 的分母全部失真，
+/// 且没有任何告警。
 fn Leitner::interval_of(self : Leitner, box : Int32) -> Double {
   let last = if self.intervals.length() == 0 {
     return 1.0
@@ -64,7 +79,16 @@ fn Leitner::interval_of(self : Leitner, box : Int32) -> Double {
     self.intervals.length()
   }
   let b = if box < 1 { 1 } else if box > last { last } else { box }
-  self.intervals[b - 1]
+  let raw = self.intervals[b - 1]
+  // 与 sm2_next_interval / fsrs interval_days 同法：源头夹到
+  // [1, max_interval_days()]，NaN 与负数兜底成 1 天。
+  if raw.is_nan() || raw < 1.0 {
+    1.0
+  } else if raw > max_interval_days() {
+    max_interval_days()
+  } else {
+    raw
+  }
 }
 
 ///|

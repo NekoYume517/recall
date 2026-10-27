@@ -119,6 +119,112 @@ test "SM-2 与 Leitner 的正常间隔完全不受上限影响" {
 }
 
 // ─────────────────────────────────────────────────────────────────
+// RC-2（2026-10-27）：Leitner 的 interval_days 与 due 必须同受上限约束
+//
+// 背景：Leitner 借 `CardState.interval_days` 表达"当前盒的间隔"，
+// 与 SM-2 / FSRS 是同一字段同一语义（见 types.mbt 的字段说明与
+// interval_cap_test 上文对另两个算法锁定的"两字段一致"性质）。
+//
+// `Leitner::with_boxes(n)` 的间隔表是 2 的幂：n >= 17 时最后一盒
+// 就是 2^16 = 65536 天，已经越界；`intervals` 是 pub(all) 字段，
+// 外部还能直接塞进 1e30。
+//
+// 旧实现只在 `add_days` 里夹 due，interval_days 裸赋值，于是同一个
+// CardState 里两个字段相差最多 2.7e25 倍：
+//   boxes=20  interval_days=524288   due-last_review=36500
+// 后果：compare 的 total_interval、stats 的 mean/max_interval、
+// export_anki_tsv 的 interval_days 列、Leitner::retrievability 的
+// 分母全部失真，且没有任何告警。
+// ─────────────────────────────────────────────────────────────────
+
+///|
+/// 把 Leitner 一路 Easy 推到顶盒，返回终态。
+fn leitner_run_to_top(boxes : Int32, rounds : Int32) -> CardState {
+  let l = Leitner::with_boxes(boxes)
+  let mut st = l.init("c1", 0L)
+  let mut now : Timestamp = 0L
+  for _ in 0..<rounds {
+    st = l.review(st, Grade::Easy, now)
+    now = st.due
+  }
+  st
+}
+
+///|
+test "RC-2: Leitner with_boxes(17) 的 interval_days 受上限约束" {
+  let st = leitner_run_to_top(17, 19)
+  // 第 17 盒的原始间隔是 65536 天，必须被夹到 36500
+  assert_true(st.interval_days <= max_interval_days())
+  assert_true(approx(st.interval_days, max_interval_days(), 0.000000001))
+}
+
+///|
+test "RC-2: Leitner with_boxes(20) 的 interval_days 受上限约束" {
+  let st = leitner_run_to_top(20, 22)
+  assert_true(st.interval_days <= max_interval_days())
+  assert_true(approx(st.interval_days, max_interval_days(), 0.000000001))
+}
+
+///|
+test "RC-2: 高盒数下 interval_days 与 due-last_review 一致" {
+  // 上限是 36500 天，这里不触发 add_days 的 Int64 饱和层，
+  // 所以两字段可以逐天相等（留 1 秒的取整余量）。
+  for boxes in [17, 18, 20] {
+    let st = leitner_run_to_top(boxes, boxes + 2)
+    let due_days = (st.due - st.last_review).to_double() / 86400.0
+    assert_true(approx(st.interval_days, due_days, 1.0))
+  }
+}
+
+///|
+test "RC-2: 外部构造超大 intervals 同样被夹到上限" {
+  // intervals 是 pub(all) 字段（API.md 3.3 列出），外部可直接构造。
+  // 旧实现下这里会得到 interval_days = 1e30。
+  let l : Leitner = { boxes: 3, intervals: [1.0, 1.0e18, 1.0e30], }
+  let mut st = l.init("c1", 0L)
+  let mut now : Timestamp = 0L
+  for _ in 0..<4 {
+    st = l.review(st, Grade::Easy, now)
+    now = st.due
+  }
+  assert_true(st.interval_days <= max_interval_days())
+  let due_days = (st.due - st.last_review).to_double() / 86400.0
+  assert_true(approx(st.interval_days, due_days, 1.0))
+}
+
+///|
+test "RC-2: Leitner 的 retrievability 用封顶后的间隔当跨度" {
+  // retrievability 的分母是 interval_days（"一个完整间隔"）。
+  // 若 interval_days 声称 524288 天而 due 只推了 36500 天，
+  // 逾期 36500 天后 R 会是 1 - 36500/524288 = 0.93（旧实测值），
+  // 而按真实到期关系应当是 0（已经过了整整一个上限间隔）。
+  let l = Leitner::with_boxes(20)
+  let mut st = l.init("c1", 0L)
+  let mut now : Timestamp = 0L
+  for _ in 0..<22 {
+    st = l.review(st, Grade::Easy, now)
+    now = st.due
+  }
+  let later = st.due + 36500L * 86400L
+  let r = l.retrievability(st, later)
+  assert_true(r < 0.01)
+}
+
+///|
+test "RC-2: 正常盒数（默认 5 盒）的间隔完全不受影响" {
+  // 默认表 1/2/4/8/16 远在上限内，修复不能改变这些值。
+  // init 已在盒 1（间隔 1），首次 review 进盒 2，之后每次进一盒、到顶停住。
+  let l = Leitner::new()
+  let mut st = l.init("c1", 0L)
+  assert_true(approx(st.interval_days, 1.0, 0.000000001))
+  let expected = [2.0, 4.0, 8.0, 16.0, 16.0, 16.0]
+  for i in 0..<6 {
+    st = l.review(st, Grade::Easy, 0L)
+    assert_true(approx(st.interval_days, expected[i], 0.000000001))
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────
 // SM-2 间隔封顶回归测试
 //
 // 背景：SM-2 的间隔是纯几何增长（EF 恒定时 interval(n) = interval(n-1)*EF）。
