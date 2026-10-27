@@ -187,20 +187,22 @@ pub fn validate_fsrs_semantics(w : Array[Double]) -> FsrsWeightCheck {
     }
   }
   // 3. Good×5 不爆炸
-  let mut d = initial_difficulty(w, 3)
-  let mut s = initial_stability(w, 3)
-  for i = 0; i < 5; i = i + 1 {
-    let r = forgetting_curve(1.0, s)
-    d = next_difficulty(w, d, 3)
-    s = stability_after_success(w, d, s, r, 3)
-    if !is_finite(s) || s >= 1000000.0 {
-      issues.push({
-        index: -1,
-        value: s,
-        why: "Good×5 后稳定性 \{s} 超出可解释范围（第 \{i + 1} 步）",
-      })
-      break
-    }
+  //
+  // RC-4（2026-10-27）：改用 `success_chain`，它内部就是引擎的状态转移
+  // 顺序（先用**旧 D** 算 S'），与 API.md 3.2 / implementation.md §6 /
+  // fsrs.mbt 的 step 注释三处契约一致。
+  //
+  // 旧实现在这里自己写了一遍循环，顺序写反（先更新 D 再用新 D 算 S），
+  // 于是给病态权重背书：w[7]=1.0 时校验器算 19.782952312966213，
+  // 引擎实际是 18.941073805407296（+4.45%），rating=Again 时差 +9.81%。
+  // 现在顺序只在 success_chain 里定义一处，测试可直接断言。
+  let s5 = success_chain(w, 3, 5)
+  if !is_finite(s5) || s5 >= 1000000.0 {
+    issues.push({
+      index: -1,
+      value: s5,
+      why: "Good×5 后稳定性 \{s5} 超出可解释范围",
+    })
   }
   // 4. 评分敏感性
   let i_again = interval_days(initial_stability(w, 1), 0.9)

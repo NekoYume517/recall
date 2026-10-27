@@ -270,6 +270,53 @@ pub fn stability_after_lapse(
   }
 }
 
+///|
+/// 连续评分的稳定性演化，**与 `step` 用同一套状态转移顺序**。
+///
+/// 顺序（`API.md` 3.2 / `implementation.md` §6 / `step` 注释三处一致）：
+/// ```
+///   1. 用旧 S 算 R
+///   2. 从旧 D 算新 D（只保存，不反馈进本次 S'）
+///   3. 用**旧 D** 算 S'      ← 关键
+/// ```
+/// 即每一步都是 `d_next = next_difficulty(旧 d)` 之后
+/// `s_next = stability_after_lapse/success(w, 旧 d, s, r, rating)`。
+///
+/// 为什么把它抽成公开函数（RC-4，2026-10-27）：`validate_fsrs_semantics`
+/// 的「Good×N 不爆炸」检查原先自己写了一遍循环，**顺序写反了**
+/// （先更新 D，再用新 D 算 S）。w[7]（mean reversion 强度，合法域 [0,1]）
+/// 越大分歧越大：w[7]=1.0 时引擎 S5=18.941073805407296、
+/// 旧校验器 S5=19.782952312966213（+4.45%），rating=Again 时差 +9.81%。
+/// 于是校验器用错的公式顺序给「这份权重语义健康」背书。
+///
+/// 现在顺序只在这一个函数里定义，校验器直接调用它——「验证器用什么顺序」
+/// 因此可由测试直接断言，不会再各写一份。
+///
+/// `steps = 0` 返回初始稳定性。每一步的 elapsed 固定 1.0，这是校验器
+/// 关心的形态：长期路径的最小步进。底层公式前置条件：`w` 至少 19 项。
+pub fn success_chain(
+  w : Array[Double],
+  rating : Int32,
+  steps : Int32,
+) -> Double {
+  let mut d = initial_difficulty(w, rating)
+  let mut s = initial_stability(w, rating)
+  let mut i = 0
+  while i < steps {
+    let r = forgetting_curve(1.0, s)
+    // 先算新 D，但稳定性仍用**旧** d —— 与 step 的推进一致
+    let d_next = next_difficulty(w, d, rating)
+    s = if rating == 1 {
+      stability_after_lapse(w, d, s, r)
+    } else {
+      stability_after_success(w, d, s, r, rating)
+    }
+    d = d_next
+    i = i + 1
+  }
+  s
+}
+
 // ---------------------------------------------------------------------------
 // 间隔
 // ---------------------------------------------------------------------------

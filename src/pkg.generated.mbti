@@ -106,6 +106,8 @@ pub fn stability_after_success(Array[Double], Double, Double, Double, Int32) -> 
 
 pub fn step(Array[Double], Double, Double, Double, Double, Int32, Bool) -> (Double, Double, Double)
 
+pub fn success_chain(Array[Double], Int32, Int32) -> Double
+
 pub fn timestamp_to_iso8601(Int64) -> String
 
 pub fn validate_fsrs_reference() -> FsrsWeightCheck
