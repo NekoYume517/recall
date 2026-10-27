@@ -201,6 +201,12 @@ pub fn next_difficulty(w : Array[Double], d : Double, rating : Int32) -> Double 
 /// - `exp(w[10]·(1-R)) - 1`：R 越低（越接近遗忘）成功回忆带来的增益越大（w[10] ≈ 1.02）
 /// - `w[15]`：Hard 惩罚因子（只在 g==2 乘入，≈ 0.23）
 /// - `w[16]`：Easy 奖励因子（只在 g==4 乘入，≈ 2.99）
+///
+/// **下限与定义域**：结果不小于 0.1。公式含 `S^(-w[9])`，因此 `S <= 0`
+/// 会产出 NaN（0·Inf）——这类输入直接回 0.1，与遗忘路径
+/// `stability_after_lapse` 的 `s < 0.1` 兜底同族（RC-7，2026-10-27）。
+/// 正数一律走公式，不被守卫短路。
+///
 /// 底层公式前置条件：`w` 至少 19 项；调用方负责验证有限性和范围。
 /// 推荐通过 `Fsrs::with_params_checked` 构造调度器。
 pub fn stability_after_success(
@@ -210,6 +216,28 @@ pub fn stability_after_success(
   r : Double,
   rating : Int32,
 ) -> Double {
+  // ── 前置守卫：非正 / 非有限的 S 直接回下限（RC-7，2026-10-27） ──
+  //
+  // 为什么必须有：公式含 `S^(-w[9])`。S = 0 时它是 +Inf，与后面的项
+  // 相乘得 0·Inf = NaN；S < 0 时 pow 直接给 NaN。而收尾的下限判断是
+  // `next < 0.1` —— NaN < 0.1 为 false，NaN 会**原样返回**，
+  // 「有 0.1 下限」的承诺失效（旧实测：S=0 → NaN、S=-1 → NaN、
+  // S=NaN → NaN）。
+  //
+  // 对照遗忘路径 `stability_after_lapse`：它用三分支 + `s < 0.1` 兜底，
+  // 实测 S=-1 时正确返回 0.1。同族函数必须同族语义。
+  //
+  // 可达性：`impl Scheduler for Fsrs` 的 review 路径被 `step` 的
+  // `is_first || s <= 0.0` 挡在前面，CLI 不可达；但这是公开公式入口
+  // （API.md 3.2），库级直接调用（自备权重实验、外部状态修复、
+  // 测试辅助）会拿到 NaN 并向下游扩散：`interval_days(NaN, dr)` → 1 天，
+  // 静默把「无记忆」当成「刚学完」。
+  //
+  // 只夹 `s <= 0` 与非有限值：正数（包括 1e-300 这类极小值）一律走公式，
+  // 保持公式语义不被守卫改写。
+  if s.is_nan() || s <= 0.0 || s == 1.0 / 0.0 || s == -1.0 / 0.0 {
+    return 0.1
+  }
   let gain_scale = @math.exp(w[8]) // w[8]：整体缩放
   let difficulty_term = 11.0 - d // 难度项（D 越小增益越大）
   let stability_decay = @math.pow(s, -w[9]) // w[9]：稳定性边际递减指数
@@ -222,7 +250,8 @@ pub fn stability_after_success(
     retrievability_term
   let multiplier = 1.0 + gain * hard_factor * easy_factor
   let next = s * multiplier
-  if next < 0.1 {
+  if next.is_nan() || next < 0.1 {
+    // NaN 一并落到下限：即使 s 合法，极端 w 也可能让中间项产出非有限值
     0.1
   } else {
     next
