@@ -10,6 +10,8 @@ pub fn add_days(Int64, Double) -> Int64
 
 pub fn[T : Scheduler] apply_review(T, CardState, Grade, Int64) -> CardState
 
+pub fn clamp_retention(Double) -> Double
+
 pub fn clamp_retrievability(Double) -> Double
 
 pub fn compare(ReviewLog, AnyScheduler, AnyScheduler) -> Comparison
@@ -147,6 +149,7 @@ pub(all) enum AnyScheduler {
 } derive(@debug.Debug)
 pub fn AnyScheduler::by_name(String) -> Self
 pub fn AnyScheduler::by_name_with_retention(String, Double) -> Self
+pub fn AnyScheduler::with_retention(Self, Double) -> Self
 pub impl Scheduler for AnyScheduler
 
 pub(all) struct CardState {
@@ -192,6 +195,7 @@ pub struct Fsrs {
 pub fn Fsrs::new() -> Self
 pub fn Fsrs::weights(Self) -> Array[Double]
 pub fn Fsrs::with_params(Array[Double]) -> Self
+pub fn Fsrs::with_params_and_retention(Array[Double], Double) -> Self
 pub fn Fsrs::with_params_checked(Array[Double]) -> Result[Self, String]
 pub fn Fsrs::with_retention(Double) -> Self
 pub impl Scheduler for Fsrs

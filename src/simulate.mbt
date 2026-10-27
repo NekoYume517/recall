@@ -408,7 +408,25 @@ pub fn[T : Scheduler] simulate_with(s : T, config : SimConfig) -> SimResult {
 }
 
 ///|
-/// 运行期分发入口（CLI 用）。
+/// 运行期分发入口（CLI / 需要按名字选算法的地方用）。
+///
+/// **`config.desired_retention` 在这里真正生效（RC-3，2026-10-27）。**
+///
+/// 背景：该字段的注释一直写着「透传给调度器构造」，`API.md` 第 5 节把
+/// 它列为公开字段，`AdviceRequest::to_config` 每次都填它，但旧实现
+/// **没有任何读取点**——两个只差该字段的配置输出逐字段相同：
+///   0.9 → total=480  final_backlog=1164
+///   0.7 → total=480  final_backlog=1164
+/// 而 `Fsrs::with_retention(0.7)` 的实例才是 1089。声明为「透传」的
+/// 字段必须真的影响结果，否则调用方会拿到一个自己没要求的实验
+/// （与 CLI 侧 R1 缺陷同型，那次只修了 CLI 路径）。
+///
+/// 语义按调度器分派，与 CLI `--retention` 完全一致：
+///   - **FSRS**：用 `AnyScheduler::with_retention` 重建实例（保留自备
+///     权重；值按 `clamp_retention` 夹取，(0,1) 外的无效值回退 0.9、
+///     越界夹到 [0.5, 0.99]）。
+///   - **SM-2 / Leitner**：算法本身没有保持率参数
+///     （`desired_retention()` 固定 0.9 / 1.0），字段对它们无效，原样跑。
 pub fn simulate(s : AnyScheduler, config : SimConfig) -> SimResult {
-  simulate_with(s, config)
+  simulate_with(s.with_retention(config.desired_retention), config)
 }

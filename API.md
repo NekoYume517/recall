@@ -348,10 +348,27 @@ pub(all) struct SimConfig {
   days : Int                    // 模拟天数
   new_per_day : Int             // 每天新增卡数
   review_limit : Int            // 每天最多复习数，0 = 无限
-  desired_retention : Double
+  desired_retention : Double    // 目标保持率，见下方"生效范围"
   /// 模拟用户行为：给定到期卡和当前状态，返回评分
   grade_fn : (CardState) -> Grade
 }
+
+**`desired_retention` 的生效范围**（2026-10-27 修正）：该字段由
+`simulate`（`AnyScheduler` 入口，CLI 与 advice 走这条）读取并施加到传入的
+调度器实例上：
+
+- **FSRS**：真正生效。间隔由它反解，因此不同的值给出不同的负载。
+  取值的夹取/回退规则与 CLI `--retention` 一致（`clamp_retention`）：
+  `(0,1)` 外的无效值与 NaN 回退 `0.9`，越界值夹到 `[0.5, 0.99]`。
+  施加时保留实例已有的权重（`Fsrs::with_params_and_retention`）。
+- **SM-2 / Leitner**：**不生效**，这是算法固有局限而非缺陷
+  ——两者的 `desired_retention()` 分别固定返回 `0.9` / `1.0`，
+  没有可调旋钮，字段对它们无效，配置只影响回显。
+
+⚠️ 泛型入口 `simulate_with(s, config)` **按传入实例原样跑**，不读该字段
+（MoonBit 的 trait 不支持默认实现，泛型入口无法重建任意 `T`）。需要让
+配置里的目标保持率生效时用 `simulate`，或先把值施加到实例上
+（`AnyScheduler::with_retention` / `Fsrs::with_retention`）。
 
 pub(all) struct SimDay {
   day : Int

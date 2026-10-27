@@ -136,7 +136,19 @@ pub fn Fsrs::weights(self : Fsrs) -> Array[Double] {
 /// 夹到 0.5 保留了意图方向；回退到 0.9 则无端反转了它。
 /// NaN 视为无效，回退 0.9。
 pub fn Fsrs::with_retention(retention : Double) -> Fsrs {
-  let r = if retention.is_nan() || retention <= 0.0 || retention >= 1.0 {
+  let r = clamp_retention(retention)
+  { w: fsrs_default_w(), desired_retention: r, }
+}
+
+///|
+/// 目标保持率的夹取/回退规则，集中一处供 `Fsrs::with_retention`、
+/// `Fsrs::with_params_and_retention` 与 `AnyScheduler::with_retention`
+/// 复用（CLI 的 `effective_retention` 复现同一套决策）。
+///
+/// 语义见 `Fsrs::with_retention` 的说明：超界夹到 [0.5, 0.99] 边界、
+/// (0,1) 外的无效值与 NaN 回退 0.9。
+pub fn clamp_retention(retention : Double) -> Double {
+  if retention.is_nan() || retention <= 0.0 || retention >= 1.0 {
     0.9
   } else if retention < 0.5 {
     0.5
@@ -145,7 +157,29 @@ pub fn Fsrs::with_retention(retention : Double) -> Fsrs {
   } else {
     retention
   }
-  { w: fsrs_default_w(), desired_retention: r, }
+}
+
+///|
+/// **保留权重**、只改目标保持率的构造器（RC-3，2026-10-27）。
+///
+/// 与 `with_params` 的关系：同样宽容（不足 19 项回退官方默认），但
+/// 额外把 `retention` 按 `clamp_retention` 夹取后写进实例——即
+/// `with_params` 与 `with_retention` 的组合，缺哪一个都不行。
+///
+/// 存在理由：`SimConfig.desired_retention` 透传时需要「在这个实例上
+/// 改目标保持率」，而调用方的实例可能带着自备权重；用
+/// `Fsrs::with_retention` 会把权重重置成官方默认，用 `with_params`
+/// 则丢了 retention。
+pub fn Fsrs::with_params_and_retention(
+  w : Array[Double],
+  retention : Double,
+) -> Fsrs {
+  let r = clamp_retention(retention)
+  if w.length() < 19 {
+    { w: fsrs_default_w(), desired_retention: r, }
+  } else {
+    { w: w.copy(), desired_retention: r, }
+  }
 }
 
 ///|
@@ -192,6 +226,37 @@ pub fn AnyScheduler::by_name_with_retention(
     "sm2" => Sm2(Sm2::new())
     "fsrs" => Fsrs(Fsrs::with_retention(retention))
     _ => Leitner(Leitner::new())
+  }
+}
+
+///|
+/// 把目标保持率施加到一个**已构造**的调度器上的辅助（RC-3，2026-10-27）。
+///
+/// 语义与 `by_name_with_retention` 一致，入口从「名字」换成「实例」——
+/// 这正是 `SimConfig.desired_retention` 需要的形状：配置里声明了目标
+/// 保持率，但调用方给的是调度器实例。
+///
+/// 分派：
+///   - **FSRS**：按 `clamp_retention` 求生效值；与当前实例一致时原样返回
+///     （避免无谓重建），否则用 `Fsrs::with_params_and_retention` 重建——
+///     该构造器**保留当前实例的权重快照**，所以自备权重的实例不会因为
+///     改目标保持率而丢掉权重。
+///   - **SM-2 / Leitner**：没有保持率参数（算法固有局限），原样返回。
+pub fn AnyScheduler::with_retention(
+  self : AnyScheduler,
+  retention : Double,
+) -> AnyScheduler {
+  match self {
+    Sm2(s) => Sm2(s)
+    Leitner(l) => Leitner(l)
+    Fsrs(s) => {
+      let eff = clamp_retention(retention)
+      if eff == s.desired_retention {
+        Fsrs(s)
+      } else {
+        Fsrs(Fsrs::with_params_and_retention(s.weights(), eff))
+      }
+    }
   }
 }
 
