@@ -221,6 +221,20 @@ fn parse_int64_loose(s : String) -> Int64? {
 
 ///|
 /// 解析浮点。支持 `1`、`1.5`、`-0.25`、`+2.`。
+///
+/// **整数部分带溢出预检（RC-5，2026-10-27）**：累加用 Int64 承载，
+/// 与 `parse_int_loose` / `parse_int64_loose` 同一套「快过界就拒绝」做法。
+///
+/// 为什么必须预检：旧实现只有 `int_part = int_part * 10L + dg`，超长数字
+/// 静默回绕；小数部分随后照常拼上，于是回绕后的整数 + 用户的小数位
+/// 构成一个"看起来合法"的值：
+///   18446744073709551616.7  (= 2^64 + 0.7)   → 0.70
+///   36893488147419103232.9  (= 2*2^64 + 0.9) → 0.90
+/// `--retention` 是决定间隔倍率的一等参数（dr=0.7 与 0.9 差 2.7 倍间隔），
+/// 把它静默改写成另一个合法值，比静默改写 `--days` 更严重。
+///
+/// 上界取 `(2^63-1 - 9) / 10`，即"再多接一位十进制数字仍不越界"的临界值；
+/// 超出即返回 None，由调用方走「用法错误 exit 2」。
 fn parse_double_loose(s : String) -> Double? {
   let t = s.trim_space().to_owned()
   if t.length() == 0 {
@@ -234,12 +248,18 @@ fn parse_double_loose(s : String) -> Double? {
   } else if t[0] == '+' {
     i = 1
   }
+  // 与 parse_int64_loose 同法的溢出预检（见其注释的推导）
+  let limit : Int64 = 9223372036854775807L
   let mut int_part : Int64 = 0L
   let mut any = false
   while i < t.length() {
     let dg = digit_of(t[i])
     if dg < 0 {
       break
+    }
+    // acc*10+dg > limit ⟺ acc > (limit-dg)/10（整数除法）
+    if int_part > (limit - dg.to_int64()) / 10L {
+      return None
     }
     int_part = int_part * 10L + dg.to_int64()
     any = true

@@ -170,3 +170,70 @@ test "RC-1: --days= 空值是用法错误而非默认 90 天" {
   assert_eq(args.get_opt("days"), Some(""))
   assert_eq(parse_int_loose(""), None)
 }
+
+// ---------------------------------------------------------------------------
+// RC-5（2026-10-27）：parse_double_loose 必须像它的兄弟解析器一样防溢出
+//
+// 现象：`--retention` 走 parse_double_loose。其整数累加
+// `acc = acc * 10 + dg` 用 Int64 承载但**没有溢出预检**，超长数字静默回绕；
+// 随后小数部分照常拼上，于是回绕后的整数 + 用户的小数位构成一个
+// "看起来合法"的值：
+//   18446744073709551616.7  (= 2^64 + 0.7)            → 0.70
+//   18446744073709551616.5  (= 2^64 + 0.5)            → 0.50
+//   36893488147419103232.9  (= 2*2^64 + 0.9)          → 0.90
+//   55340232221128654848.8  (= 3*2^64 + 0.8)          → 0.80
+// 用户拿到的是一个无人察觉的错误目标保持率（间隔倍率直接跟着它变）。
+//
+// 契约：同文件的 parse_int_loose 与 parse_int64_loose 都写了显式溢出预检
+// （`acc > 2147483648L` / `acc > (limit - dg)/10L`），注释明确"越界返回
+// None …… 超长窗口静默当成短窗口跑完"。同类大数解析必须同等严格。
+// ---------------------------------------------------------------------------
+
+///|
+test "RC-5: parse_double_loose 拒绝 2^64+0.7（不再回绕成 0.7）" {
+  assert_eq(parse_double_loose("18446744073709551616.7"), None)
+}
+
+///|
+test "RC-5: parse_double_loose 拒绝 2^64+0.5" {
+  assert_eq(parse_double_loose("18446744073709551616.5"), None)
+}
+
+///|
+test "RC-5: parse_double_loose 拒绝 2*2^64+0.9" {
+  assert_eq(parse_double_loose("36893488147419103232.9"), None)
+}
+
+///|
+test "RC-5: parse_double_loose 拒绝 3*2^64+0.8" {
+  assert_eq(parse_double_loose("55340232221128654848.8"), None)
+}
+
+///|
+test "RC-5: parse_double_loose 拒绝超长纯整数串" {
+  assert_eq(parse_double_loose("99999999999999999999"), None)
+  assert_eq(parse_double_loose("12345678901234567890"), None)
+}
+
+///|
+test "RC-5: 合法的小数/整数照常解析（防过度收紧）" {
+  assert_eq(parse_double_loose("0.9"), Some(0.9))
+  assert_eq(parse_double_loose("1"), Some(1.0))
+  assert_eq(parse_double_loose("-0.25"), Some(-0.25))
+  assert_eq(parse_double_loose("+2."), Some(2.0))
+  assert_eq(parse_double_loose("0.995"), Some(0.995))
+  assert_eq(parse_double_loose("36500"), Some(36500.0))
+  assert_eq(parse_double_loose("1000000.5"), Some(1000000.5))
+}
+
+///|
+test "RC-5: 与兄弟解析器同一套严格性" {
+  // 同一串数字，整数解析器拒绝的，浮点解析器也必须拒绝
+  for
+    s in [
+      "18446744073709551617", "99999999999999999999", "12345678901234567890",
+    ] {
+    assert_eq(parse_int64_loose(s), None)
+    assert_eq(parse_double_loose(s), None)
+  }
+}
