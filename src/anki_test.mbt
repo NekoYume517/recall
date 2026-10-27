@@ -42,6 +42,80 @@ test "anki: ISO8601 已知日期精确（含闰日与 9999 边界）" {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────
+// RC-6（2026-10-27）：修正年份宽度的契约描述，并锁定真实行为
+//
+// 原注释写「年份补 4 位（**Anki 的 CSV 解析器期待 4 位年**）」，
+// 但实现只在 ystr.length() < 4 时补零，超过 4 位原样输出——从没有过
+// "4 位" 这个约束。于是注释承诺了一条实现从未执行的规则。
+//
+// 触发条件是本库自己产生的合法值：JSONL 允许的 reviewed_at 上限是
+// 253402300799（= 9999-12-31 23:59:59），加上 max_interval_days() = 36500
+// 天即得到 10099 年；Int64 上限对应 1587287 年。
+//
+// 裁决（2026-10-27）：**保持不截断**——年份不足 4 位补零，超过 4 位原样
+// 输出。截断会把 10099 年变成 0099 年（把未来的到期日说成公元 99 年），
+// 比"多一位数字"更糟。因此这里做的是：把注释改成如实描述，并用测试
+// 锁定当前行为，防止将来有人照着旧注释去"修"成 4 位。
+// ─────────────────────────────────────────────────────────────────
+
+///|
+test "RC-6: 年份不足 4 位补零，超过 4 位原样输出（不截断）" {
+  // 不足 4 位：补零到 4 位（既有行为，防回归）
+  assert_eq(timestamp_to_iso8601(-59011459200L), "0100-01-01 00:00:00")
+  assert_eq(timestamp_to_iso8601(-62135596800L), "0001-01-01 00:00:00")
+  // 恰好 4 位：不补
+  assert_eq(timestamp_to_iso8601(253402300799L), "9999-12-31 23:59:59")
+  // 超过 4 位：原样输出，不截断也不补
+  assert_eq(
+    timestamp_to_iso8601(9223372036854775807L),
+    "1587287-03-17 15:30:07",
+  )
+}
+
+///|
+test "RC-6: JSONL 上限时间戳 + 36500 天给出 10099 年（不截断）" {
+  // 这是从日志可达的最远 due（reviewed_at 取 JSONL 上限、间隔取上限）
+  let ts = add_days(253402300799L, 36500.0)
+  let s = timestamp_to_iso8601(ts)
+  println("add_days(253402300799, 36500) -> " + s)
+  assert_eq(s, "10099-12-06 23:59:59")
+  // 关键：年份段完整，不可能是被截断的 "0099"
+  let year = s.split("-").collect()[0]
+  assert_eq(year, "10099")
+}
+
+///|
+test "RC-6: 端到端——合法日志的 --anki 导出里 due 年份完整" {
+  // 用 12 次连续 Easy + 靠近上限的 reviewed_at 造出 due > 9999 年，
+  // 这是完全合法的 JSONL（reviewed_at 都在允许域内）。
+  let log = ReviewLog::new()
+  let mut t : Timestamp = 253000000000L
+  for _ in 0..<12 {
+    log.push(ReviewEvent::new("c1", t, t, Grade::Easy, 0.0))
+    t = t + 86400L * 400L
+  }
+  let out = export_anki_from_log(log, AnyScheduler::Fsrs(Fsrs::new()))
+  println(out)
+  let data = out.split("\n").collect()[4].split("\t").collect()
+  let due = data[5]
+  assert_eq(due, "10063-05-09 17:46:40")
+  // 8 列结构不被破坏
+  assert_eq(data.length(), 8)
+  assert_eq(data[7], "复习")
+}
+
+///|
+test "RC-6: 修复不改变 4 位及以内年份的既有输出" {
+  // 防回归：所有已知锚点逐字节不变
+  assert_eq(timestamp_to_iso8601(0L), "1970-01-01 00:00:00")
+  assert_eq(timestamp_to_iso8601(-1L), "1969-12-31 23:59:59")
+  assert_eq(timestamp_to_iso8601(-86400L), "1969-12-31 00:00:00")
+  assert_eq(timestamp_to_iso8601(1700000000L), "2023-11-14 22:13:20")
+  assert_eq(timestamp_to_iso8601(951782400L), "2000-02-29 00:00:00")
+  assert_eq(timestamp_to_iso8601(-2203977600L), "1900-02-28 00:00:00")
+}
+
 ///|
 test "anki: 导出格式头齐全且行序稳定" {
   let log = anki_parse_log(

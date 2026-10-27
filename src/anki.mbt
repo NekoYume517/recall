@@ -24,6 +24,12 @@
 ///|
 /// Unix 秒时间戳 → ISO8601（UTC，"YYYY-MM-DD HH:MM:SS"）。
 ///
+/// **年份宽度**：不足 4 位补零到 4 位（如 `0001-01-01`），恰好 4 位原样，
+/// **超过 4 位原样输出、不截断**（如 `10099-12-06`、`1587287-03-17`）。
+/// `due` 可以合法地越过 9999 年（JSONL 的 reviewed_at 上限加
+/// `max_interval_days()`），截断会把未来日期说成公元 99 年，因此保留完整
+/// 年份。详见函数体内关于 RC-6 的说明。
+///
 /// 纯手写历法换算（ civil_from_days 算法，Howard Hinnant 版本），
 /// 不引入任何日期库。正确性由 roundtrip 测试锚定若干已知日期。
 pub fn timestamp_to_iso8601(ts : Timestamp) -> String {
@@ -58,7 +64,20 @@ pub fn timestamp_to_iso8601(ts : Timestamp) -> String {
     }
   }
   let ystr = if year < 0 { "-" + (-year).to_string() } else { year.to_string() }
-  // 年份补 4 位（Anki 的 CSV 解析器期待 4 位年）
+  // 年份宽度规则（RC-6，2026-10-27 修正描述）：
+  //   - 不足 4 位 → 补零到 4 位（0001 年写成 "0001"）
+  //   - 恰好 4 位 → 原样
+  //   - 超过 4 位 → **原样输出，不截断**
+  //
+  // 旧注释写的是「年份补 4 位（Anki 的 CSV 解析器期待 4 位年）」，
+  // 但实现从来没做过"4 位"这个约束——超过 4 位时一直走 else 原样输出。
+  // 那句注释把一条从未实现的规则说成契约，是文档谎言。
+  //
+  // 为什么保持不截断：`due` 可以合法地越过 9999 年——JSONL 允许的
+  // reviewed_at 上限是 253402300799（9999-12-31 23:59:59），加上
+  // max_interval_days() = 36500 天即 10099 年（Int64 上限对应 1587287 年）。
+  // 截断会把 10099 年写成 "0099"（把未来的到期日说成公元 99 年），
+  // 比"多一位数字"更糟。因此保留现状并锁定测试。
   let y4 = if ystr.length() < 4 {
     let zeros = 4 - ystr.length()
     let sb = StringBuilder()
@@ -76,6 +95,7 @@ pub fn timestamp_to_iso8601(ts : Timestamp) -> String {
     }
     sb.to_string()
   } else {
+    // 4 位与超 4 位都走这里：完整保留，不补也不截
     ystr
   }
   "\{y4}-\{pad2(m.to_int64())}-\{pad2(d.to_int64())} \{pad2(hh)}:\{pad2(mm)}:\{pad2(ss)}"
