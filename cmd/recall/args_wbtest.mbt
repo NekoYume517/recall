@@ -6,6 +6,10 @@
 //   R2 --days 只有 <0 检查，无上限（--days 2000000000 会跑出天文成本）；
 //   R3 --seed 用 Int32 解析再 to_int64，Int64 范围的种子被误报非法；
 //   R4 replay --anki --json 同给时 --json 被静默忽略。
+//
+// 2026-10-27 增补（RC-1）：`--key=value` 形式必须与 `--key value` 等价。
+// 旧实现只按空格切分，`--days=10` 整体落进 flags（键值一起丢失），
+// 参数静默回退默认值且退出码 0 —— 用户拿到一个自己没要求的实验。
 
 ///|
 test "effective_retention: fsrs 越界值夹到边界并如实返回" {
@@ -84,4 +88,85 @@ test "replay_conflict_hint: --anki 与 --json 同给时提示按 --anki 输出" 
   assert_eq(replay_conflict_hint(true, false), "")
   assert_eq(replay_conflict_hint(false, true), "")
   assert_eq(replay_conflict_hint(false, false), "")
+}
+
+// ---------------------------------------------------------------------------
+// RC-1（2026-10-27）：`--key=value` 等价于 `--key value`
+//
+// 现象：旧 parse_args 只认空格形式。`--days=10` 里 body = "days=10"，
+//   下一项不以 `--` 开头时被当作「值」收进 params["days=10"]，
+//   `Args::get("days", …)` 永不命中，参数静默回退默认值——
+//   `simulate --days=10` 实跑 90 天、`replay --scheduler=sm2` 实跑 fsrs，
+//   两者退出码都是 0。
+// 契约：usage 文本与 README 把 --days / --scheduler 列为可配置项；
+//   同一意图写成等号形式必须给出同一结果（或明确报用法错误），
+//   不允许「既没生效、也不报错」。
+// ---------------------------------------------------------------------------
+
+///|
+test "RC-1: --key=value 切分后键与值都保留" {
+  let args = parse_args(["--days=10", "--new-per-day=2"])
+  assert_eq(args.get("days", ""), "10")
+  assert_eq(args.get("new-per-day", ""), "2")
+}
+
+///|
+test "RC-1: --scheduler=sm2 让调度器名真正被读到" {
+  let args = parse_args(["--log=x.jsonl", "--scheduler=sm2"])
+  assert_eq(args.get("scheduler", ""), "sm2")
+  // 未提供 scheduler 时才回退默认
+  let args2 = parse_args(["--log=x.jsonl"])
+  assert_eq(args2.get("scheduler", "fsrs"), "fsrs")
+}
+
+///|
+test "RC-1: 等号形式与空格形式解析结果逐键相同" {
+  let eq = parse_args(["--days=10", "--new-per-day=2", "--review-limit=5"])
+  let sp = parse_args([
+    "--days", "10", "--new-per-day", "2", "--review-limit", "5",
+  ])
+  assert_eq(eq.get("days", ""), sp.get("days", ""))
+  assert_eq(eq.get("new-per-day", ""), sp.get("new-per-day", ""))
+  assert_eq(eq.get("review-limit", ""), sp.get("review-limit", ""))
+}
+
+///|
+test "RC-1: 纯 --flag（无等号）仍记为布尔 flag" {
+  let args = parse_args(["--json", "--anki"])
+  assert_true(args.has("json"))
+  assert_true(args.has("anki"))
+  assert_eq(args.params.length(), 0)
+}
+
+///|
+test "RC-1: 带等号的 token 不再整体落进 flag 键名" {
+  let args = parse_args(["--days=10"])
+  // 旧实现的症状：flags 里出现 "days=10"（键值一起被当成 flag 名）
+  assert_eq(args.flags.get("days=10"), None)
+  assert_eq(args.flags.get("days"), None)
+  assert_eq(args.get_opt("days"), Some("10"))
+}
+
+///|
+test "RC-1: 值中含等号时只按第一个等号切分" {
+  let args = parse_args(["--log=a=b.jsonl"])
+  assert_eq(args.get("log", ""), "a=b.jsonl")
+}
+
+///|
+test "RC-1: 等号形式重复给同一参数时后者胜出（last-wins，与空格形式一致）" {
+  let eq = parse_args(["--days=10", "--days=20"])
+  let sp = parse_args(["--days", "10", "--days", "20"])
+  assert_eq(eq.get("days", ""), "20")
+  assert_eq(sp.get("days", ""), "20")
+  assert_eq(eq.get("days", ""), sp.get("days", ""))
+}
+
+///|
+test "RC-1: --days= 空值是用法错误而非默认 90 天" {
+  // 空值必须能被调用方识别为「提供了但非法」：
+  // get_opt 返回 Some("")，由 parse_int_loose("") = None 触发 exit 2。
+  let args = parse_args(["--days="])
+  assert_eq(args.get_opt("days"), Some(""))
+  assert_eq(parse_int_loose(""), None)
 }

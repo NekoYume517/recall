@@ -30,8 +30,22 @@ struct Args {
 }
 
 ///|
-/// 手写解析：遇到 `--xxx` 就看下一项是否以 `--` 开头，
-/// 不是则当作值，是则记成布尔 flag。
+/// 手写解析，支持三种形式：
+///   - `--key value`   ：下一项不以 `--` 开头时当作值
+///   - `--key=value`   ：按**第一个** `=` 切分（值里可以再含 `=`）
+///   - `--flag`        ：无值，记为布尔 flag
+///
+/// `--key=`（右侧为空）记入 params 且值为空串：这样数值参数会经
+/// `get_opt → Some("") → parse_*_loose("") = None` 走到「用法错误 exit 2」，
+/// 而不是静默回退默认值；布尔参数仍靠 `Args::has`（params 或 flags 命中即真）
+/// 正常工作，`--json=` 与 `--json` 等效。
+///
+/// **重复参数**：同一 key 给多次时**后者胜出**（last-wins），
+/// 两种形式共用这一规则，也不再另行报错——避免打断既有脚本。
+///
+/// RC-1（2026-10-27）：旧实现只按空格切分，`--days=10` 会整体落进
+/// flags（键值一起丢失），参数静默回退默认值且退出码 0：
+///   `replay --scheduler=sm2` 实跑 fsrs、`simulate --days=10` 实跑 90 天。
 fn parse_args(argv : Array[String]) -> Args {
   let params : Map[String, String] = Map([])
   let flags : Map[String, Bool] = Map([])
@@ -40,6 +54,19 @@ fn parse_args(argv : Array[String]) -> Args {
     let tok = argv[i]
     if tok.has_prefix("--") {
       let body = tok.substring(start=2, end=tok.length())
+      // --- 等号形式：按第一个 '=' 切成 key=value ---
+      match body.find("=") {
+        Some(eq) => {
+          let key = body.substring(start=0, end=eq)
+          let value = body.substring(start=eq + 1, end=body.length())
+          // 空值也写入 params（值为空串），让调用方有机会报「提供了但非法」；
+          // 静默丢弃才是缺陷。
+          params[key] = value
+          i = i + 1
+          continue
+        }
+        None => ()
+      }
       let has_next = i + 1 < argv.length()
       if has_next && !argv[i + 1].has_prefix("--") {
         params[body] = argv[i + 1]
@@ -385,7 +412,9 @@ fn usage_text() -> String {
     "  --target-backlog advice 的积压目标, 张 (默认 0 = 清零)", "  --seed           模拟的伪随机种子 (默认 20240101, 64 位整数)",
     "  --json           以 JSON 输出 (仅 replay, 与 --anki 同给时被忽略)",
     "  --anki           以 Anki 文本导入格式(TSV)输出最终状态 (仅 replay, 优先于 --json)",
-    "", "退出码: 0 成功 / 1 数据错误 / 2 用法错误", "",
+    "", "参数写法: --key value 与 --key=value 等价；--flag 表示布尔开",
+    "          同一参数重复给出时后者生效 (last-wins)", "", "退出码: 0 成功 / 1 数据错误 / 2 用法错误",
+    "",
   ]
   let sb = StringBuilder()
   for line in lines {
