@@ -169,14 +169,26 @@ pub fn retention_curve(
   let totals = Array::make(n_buckets, 0)
   let passes = Array::make(n_buckets, 0)
   for (iv, grade) in samples {
-    // 归桶：floor(iv / width)，封顶到最后一桶
-    // （iv == max_elapsed 时除法得 n_buckets，必须夹回来）
-    let mut bi = (iv / safe_width).to_int()
-    if bi < 0 {
-      bi = 0
-    }
-    if bi >= n_buckets {
-      bi = n_buckets - 1
+    // 归桶：用**与标签同源**的乘法边界比较（RC-8，2026-10-27）。
+    //
+    // 旧实现是 `bi = (iv / width).to_int()`（除法），标签是
+    // `width * i`（乘法）。两套算式在桶沿上打架：对 iv = max/n * k
+    // 这类数学上正好落在桶沿的样本，`iv / width` 会比整数小 1~2 ulp，
+    // 截断后掉进**前一桶**，于是打印出的 `[lo, hi)` 上界恰好等于该样本，
+    // 记号自相矛盾。
+    //
+    // 精确见证（max=180, buckets=7, width=180/7=25.714285714285715）：
+    //   iv = 180*3/7       = 77.14285714285714
+    //   iv / width         = 2.9999999999999996   → to_int = 2（旧：落桶 2）
+    //   width * 3          = 77.14285714285714     ← 与 iv 逐位相同
+    // 穷举扫描命中 583 组。现在归桶直接与标签用同一串 `width * k` 比较，
+    // 于是「标签含自己桶内样本」成为构造保证。
+    //
+    // 语义：找最大的 k 使 `iv >= width*k`（等价于 `k = ceil(iv/width)-1`），
+    // 再封顶到最后一桶（iv == max_elapsed 时落在末桶，末桶是闭区间）。
+    let mut bi = 0
+    while bi + 1 < n_buckets && iv >= safe_width * (bi + 1).to_double() {
+      bi = bi + 1
     }
     totals[bi] = totals[bi] + 1
     if is_recalled(grade) {
@@ -188,7 +200,8 @@ pub fn retention_curve(
   let mut i = 0
   while i < n_buckets {
     if totals[i] > 0 {
-      // 上下界都用同一个 width 乘出来，相邻桶严格首尾相接
+      // 上下界仍用与归桶相同的 `width * k` 乘出来：
+      // 相邻桶严格首尾相接，且与归桶比较逐位同源。
       let lower = safe_width * i.to_double()
       let upper = safe_width * (i + 1).to_double()
       out.push((lower, upper, passes[i].to_double() / totals[i].to_double()))
