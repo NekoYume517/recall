@@ -54,6 +54,20 @@ FSRS 相对 SM-2 的差异在本仓库可以复现的部分见 `compare` 命令�
 
 ## 快速开始
 
+**作为库依赖**（已发布到 [mooncakes.io](https://mooncakes.io/docs/NekoYume517/recall)）：
+
+```bash
+moon add NekoYume517/recall
+```
+
+```moonbit
+let s = @recall.Fsrs::new()
+let c0 = @recall.CardState::new("c1", 0L)
+let c1 = @recall.apply_review(s, c0, @recall.Good, 0L)  // 返回新的 CardState
+```
+
+**作为命令行工具**（源码运行）：
+
 ```bash
 moon check
 moon test

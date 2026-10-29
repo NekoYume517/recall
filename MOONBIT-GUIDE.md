@@ -42,7 +42,7 @@ test "white" {
 ```moonbit
 // src/foo_wbtest.mbt —— 黑盒，需要在 moon.pkg 里显式自导入
 // moon.pkg:
-//   import { "moonbit-hack/xxx/src" @xxx } for "wbtest"
+//   import { "NekoYume517/xxx/src" @xxx } for "wbtest"
 test "black" {
   let f = @xxx.Field::new("A", 0)  // 必须带 @xxx
   inspect(f.name, content="A")
@@ -54,7 +54,7 @@ test "black" {
 ```moonbit
 import {
   "moonbitlang/core/json" @json,
-  "moonbit-hack/copybook/src" @copybook,
+  "NekoYume517/copybook/src" @copybook,
 }
 
 pkgtype(kind: "library")   // 或 "executable"
