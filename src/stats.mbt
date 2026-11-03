@@ -15,6 +15,7 @@
 
 ///|
 /// 单张卡的统计画像。
+#derive(Debug)
 pub(all) struct CardStats {
   card_id : String
   /// 总复习次数（含遗忘）
@@ -27,7 +28,7 @@ pub(all) struct CardStats {
   max_interval : Double
   /// 保持率 = 成功复习 / 总复习，范围 [0,1]
   retention_rate : Double
-} derive(Debug)
+}
 
 ///|
 /// 全项目统计共用的间隔口径。日志开始可能晚于卡片首次学习，
@@ -213,6 +214,7 @@ pub fn retention_curve(
 
 ///|
 /// 汇总后的整体指标（`stats` 子命令的页脚用）。
+#derive(Debug)
 pub(all) struct OverallStats {
   cards : Int32
   reviews : Int32
@@ -222,7 +224,7 @@ pub(all) struct OverallStats {
   /// 有间隔样本的卡片 mean_interval 的等权平均，无样本卡片不计入。
   /// 首条显式正间隔有效；同刻重复复习的零间隔也有效。
   mean_interval : Double
-} derive(Debug)
+}
 
 ///|
 /// 从 `compute_stats` 生成的卡片统计聚合整体指标。

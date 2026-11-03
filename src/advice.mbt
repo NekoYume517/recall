@@ -30,6 +30,7 @@
 
 ///|
 /// 建议请求。
+#derive(Debug)
 pub(all) struct AdviceRequest {
   /// 模拟天数（建议窗口）
   days : Int32
@@ -45,10 +46,11 @@ pub(all) struct AdviceRequest {
   /// 积压目标：窗口结束时允许的最大积压。
   /// 0 = 完全清零（最严格）
   target_backlog : Int32
-} derive(Debug)
+}
 
 ///|
 /// 建议结果。
+#derive(Debug)
 pub(all) struct AdviceResult {
   /// 推荐的每日新卡数
   new_per_day : Int32
@@ -65,7 +67,7 @@ pub(all) struct AdviceResult {
   search_hi : Int32
   /// 人类可读的一句话结论
   summary : String
-} derive(Debug)
+}
 
 ///|
 /// 建议请求默认值：90 天窗口、复习上限 200、90% 保持率、

@@ -12,6 +12,7 @@
 
 ///|
 /// 一次重放的完整结果。
+#derive(Debug)
 pub(all) struct ReplayResult {
   /// 每张卡的最终状态（按 card_id 索引）
   final_states : Map[String, CardState]
@@ -24,7 +25,7 @@ pub(all) struct ReplayResult {
   total_lapses : Int32
   /// 平均间隔偏差：|实际间隔 − 上次调度给出的间隔| 的均值（天）
   interval_error_days : Double
-} derive(Debug)
+}
 
 ///|
 /// 用任意调度器重放整份日志。
@@ -113,6 +114,7 @@ pub fn replay(log : ReviewLog, s : AnyScheduler) -> ReplayResult {
 /// 是同一份日志，所以两列恒等、差值恒 0，而 CLI 还把它推荐为「更可比的
 /// 指标」，纯属误导。注意这个指标依然偏向宽松的调度器（间隔本来就短，
 /// 更难触发回退），CLI 会说明这一点。
+#derive(Debug)
 pub(all) struct Comparison {
   a_name : String
   b_name : String
@@ -122,7 +124,7 @@ pub(all) struct Comparison {
   b_lapses : Int32
   /// 每张卡的最终间隔：(card_id, a 的间隔, b 的间隔)，按 card_id 升序
   per_card : Array[(String, Double, Double)]
-} derive(Debug)
+}
 
 ///|
 /// 所有卡片最终间隔之和。这是"三个月后平均每张卡能撑多久"的代理指标：

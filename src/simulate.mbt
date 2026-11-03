@@ -64,6 +64,7 @@ fn make_rng(seed : Int64) -> () -> Double {
 
 ///|
 /// 模拟配置。
+#derive(Debug)
 pub(all) struct SimConfig {
   /// 模拟天数
   days : Int32
@@ -80,7 +81,7 @@ pub(all) struct SimConfig {
   /// `simulate_with` 不读取它——保留在配置里是为了完整回显与
   /// 结果自描述。换种子请走策略工厂，而不是改这个字段。
   seed : Int64
-} derive(Debug)
+}
 
 ///|
 /// 默认配置：90 天、每天 20 张、复习上限 200、optimistic 策略（总是 Good）。
@@ -100,6 +101,7 @@ pub fn SimConfig::default() -> SimConfig {
 
 ///|
 /// 单日统计。
+#derive(Debug)
 pub(all) struct SimDay {
   /// 第几天（0 起）
   day : Int32
@@ -113,16 +115,17 @@ pub(all) struct SimDay {
   backlog : Int32
   /// 当天复习中判为"记住了"的数量（分母是 reviewed）
   retained : Int32
-} derive(Debug)
+}
 
 ///|
 /// 模拟结果。
+#derive(Debug)
 pub(all) struct SimResult {
   days : Array[SimDay]
   total_reviews : Int32
   max_backlog : Int32
   final_backlog : Int32
-} derive(Debug)
+}
 
 // ---------------------------------------------------------------------------
 // 评分策略

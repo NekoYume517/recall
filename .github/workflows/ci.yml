@@ -6,6 +6,15 @@ on:
   pull_request:
     branches: [ main ]
 
+env:
+  # The CDN only publishes `latest`; dated versions 403, so a literal version
+  # pin cannot be downloaded. What *can* be pinned is the syntax level this
+  # source targets: 0.1.20261102 introduced `#derive(...)` and removed
+  # `Double::to_float` / `UInt::reinterpret_as_float`. The installer below takes
+  # `latest`, then hard-fails if that turns out to be *older* than the level the
+  # code is written against. That converts silent drift into a clear error.
+  MOONBIT_MIN_VERSION: "0.1.20261102"
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -17,8 +26,16 @@ jobs:
           curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
           echo "$HOME/.moon/bin" >> $GITHUB_PATH
 
-      - name: Verify toolchain
-        run: moon version
+      - name: Verify toolchain is at least ${{ env.MOONBIT_MIN_VERSION }}
+        run: |
+          moon version
+          got=$(moon version | head -n1 | awk '{print $2}')
+          echo "installed: $got  minimum: $MOONBIT_MIN_VERSION"
+          newest=$(printf '%s\n%s\n' "$MOONBIT_MIN_VERSION" "$got" | sort -V | tail -n1)
+          if [ "$newest" != "$got" ]; then
+            echo "::error::toolchain $got is older than the syntax level this repo targets ($MOONBIT_MIN_VERSION)"
+            exit 1
+          fi
 
       # Fresh runners start with an empty registry index. Without this,
       # dependency resolution fails with 'module was not found in the
@@ -27,8 +44,7 @@ jobs:
         run: moon update
 
       # Errors must be zero. Warnings are allowed: the codebase still carries
-      # deprecation notices from impl ... with fn name(self) and from
-      # derive(Eq) promotion, which are style-level and not defects.
+      # style-level notices that are not defects.
       - name: Type check
         run: moon check
 

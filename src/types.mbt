@@ -10,12 +10,13 @@
 /// 注意：`to_int` 给出的是「展示用」的 0..5 刻度（Again=0 / Hard=2 /
 /// Good=3 / Easy=5），**不是** SM-2 公式里的 `q`。SM-2 的 `q` 另有映射
 /// （Again=2 / Hard=3 / Good=4 / Easy=5），见 `sm2.mbt` 的 `sm2_quality`。
+#derive(Eq, Debug)
 pub(all) enum Grade {
   Again // 0
   Hard // 1-2
   Good // 3
   Easy // 4-5
-} derive(Eq, Debug)
+}
 
 ///|
 /// 评分 → 展示用整数（Again=0 / Hard=2 / Good=3 / Easy=5）。
@@ -170,6 +171,7 @@ pub fn add_days(now : Timestamp, days : Double) -> Timestamp {
 /// - `due`         下次到期时刻
 /// - `interval_days` 当前间隔天数
 /// - `phase`       生命周期阶段
+#derive(Debug)
 pub(all) struct CardState {
   card_id : String
   stability : Double // S：保持天数
@@ -180,7 +182,7 @@ pub(all) struct CardState {
   due : Timestamp
   interval_days : Double
   phase : Phase
-} derive(Debug)
+}
 
 ///|
 /// 卡片生命周期：
@@ -188,12 +190,13 @@ pub(all) struct CardState {
 /// - `Learning`   学习期内（短间隔）
 /// - `Review`     长期复习（间隔已拉长）
 /// - `Relearning` 遗忘后重新学习
+#derive(Eq, Debug)
 pub(all) enum Phase {
   New
   Learning
   Review
   Relearning
-} derive(Eq, Debug)
+}
 
 ///|
 /// 阶段的中文标签，供 CLI 报表使用。

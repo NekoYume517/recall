@@ -117,12 +117,14 @@ pub fn validate_fsrs_semantics(Array[Double]) -> FsrsWeightCheck
 pub fn validate_fsrs_weights(Array[Double]) -> FsrsWeightCheck
 
 // Errors
+#derive(@debug.Debug)
 pub(all) suberror LogError {
   BadLine(Int32, String)
   BadTimestamp(Int32, String)
-} derive(@debug.Debug)
+}
 
 // Types and methods
+#derive(@debug.Debug)
 pub(all) struct AdviceRequest {
   days : Int32
   review_limit : Int32
@@ -130,10 +132,11 @@ pub(all) struct AdviceRequest {
   policy_factory : () -> (CardState) -> Grade
   seed : Int64
   target_backlog : Int32
-} derive(@debug.Debug)
+}
 pub fn AdviceRequest::default() -> Self
 pub fn AdviceRequest::to_config(Self, Int32) -> SimConfig
 
+#derive(@debug.Debug)
 pub(all) struct AdviceResult {
   new_per_day : Int32
   simulation : SimResult
@@ -142,18 +145,20 @@ pub(all) struct AdviceResult {
   search_lo : Int32
   search_hi : Int32
   summary : String
-} derive(@debug.Debug)
+}
 
+#derive(@debug.Debug)
 pub(all) enum AnyScheduler {
   Sm2(Sm2)
   Fsrs(Fsrs)
   Leitner(Leitner)
-} derive(@debug.Debug)
+}
 pub fn AnyScheduler::by_name(String) -> Self
 pub fn AnyScheduler::by_name_with_retention(String, Double) -> Self
 pub fn AnyScheduler::with_retention(Self, Double) -> Self
 pub impl Scheduler for AnyScheduler
 
+#derive(@debug.Debug)
 pub(all) struct CardState {
   card_id : String
   stability : Double
@@ -164,13 +169,14 @@ pub(all) struct CardState {
   due : Int64
   interval_days : Double
   phase : Phase
-} derive(@debug.Debug)
+}
 pub fn CardState::equal(Self, Self) -> Bool
 pub fn CardState::is_due(Self, Int64) -> Bool
 pub fn CardState::is_new(Self) -> Bool
 pub fn CardState::new(String, Int64) -> Self
 pub fn CardState::overdue_days(Self, Int64) -> Double
 
+#derive(@debug.Debug)
 pub(all) struct CardStats {
   card_id : String
   reviews : Int32
@@ -178,8 +184,9 @@ pub(all) struct CardStats {
   mean_interval : Double
   max_interval : Double
   retention_rate : Double
-} derive(@debug.Debug)
+}
 
+#derive(@debug.Debug)
 pub(all) struct Comparison {
   a_name : String
   b_name : String
@@ -188,12 +195,13 @@ pub(all) struct Comparison {
   a_lapses : Int32
   b_lapses : Int32
   per_card : Array[(String, Double, Double)]
-} derive(@debug.Debug)
+}
 
+#derive(@debug.Debug)
 pub struct Fsrs {
   desired_retention : Double
   // private fields
-} derive(@debug.Debug)
+}
 pub fn Fsrs::new() -> Self
 pub fn Fsrs::weights(Self) -> Array[Double]
 pub fn Fsrs::with_params(Array[Double]) -> Self
@@ -202,75 +210,84 @@ pub fn Fsrs::with_params_checked(Array[Double]) -> Result[Self, String]
 pub fn Fsrs::with_retention(Double) -> Self
 pub impl Scheduler for Fsrs
 
+#derive(@debug.Debug)
 pub(all) enum FsrsWeightCheck {
   Valid
   Invalid(Array[FsrsWeightIssue])
-} derive(@debug.Debug)
+}
 
+#derive(@debug.Debug)
 pub(all) struct FsrsWeightIssue {
   index : Int32
   value : Double
   why : String
-} derive(@debug.Debug)
+}
 
+#derive(Eq, @debug.Debug)
 pub(all) enum Grade {
   Again
   Hard
   Good
   Easy
-} derive(Eq, @debug.Debug)
+}
 pub fn Grade::from_int(Int32) -> Self
 pub fn Grade::from_label(StringView) -> Self?
 pub fn Grade::is_pass(Self) -> Bool
 pub fn Grade::label(Self) -> String
 pub fn Grade::to_int(Self) -> Int32
 
+#derive(@debug.Debug)
 pub(all) struct Leitner {
   boxes : Int32
   intervals : Array[Double]
-} derive(@debug.Debug)
+}
 pub fn Leitner::new() -> Self
 pub fn Leitner::with_boxes(Int32) -> Self
 pub impl Scheduler for Leitner
 
+#derive(@debug.Debug)
 pub(all) struct OverallStats {
   cards : Int32
   reviews : Int32
   lapses : Int32
   retention_rate : Double
   mean_interval : Double
-} derive(@debug.Debug)
+}
 
+#derive(Eq, @debug.Debug)
 pub(all) enum Phase {
   New
   Learning
   Review
   Relearning
-} derive(Eq, @debug.Debug)
+}
 pub fn Phase::label(Self) -> String
 
+#derive(@debug.Debug)
 pub(all) struct ReplayResult {
   final_states : Map[String, CardState]
   snapshots : Array[(Int64, String, CardState)]
   total_reviews : Int32
   total_lapses : Int32
   interval_error_days : Double
-} derive(@debug.Debug)
+}
 
+#derive(@debug.Debug)
 pub(all) struct ReviewEvent {
   card_id : String
   reviewed_at : Int64
   due_at : Int64
   grade : Grade
   elapsed_days : Double
-} derive(@debug.Debug)
+}
 pub fn ReviewEvent::equal(Self, Self) -> Bool
 pub fn ReviewEvent::new(String, Int64, Int64, Grade, Double) -> Self
 pub fn ReviewEvent::overdue_days(Self) -> Double
 
+#derive(@debug.Debug)
 pub(all) struct ReviewLog {
   events : Array[ReviewEvent]
-} derive(@debug.Debug)
+}
 pub fn ReviewLog::by_card(Self) -> Map[String, Array[ReviewEvent]]
 pub fn ReviewLog::card_ids(Self) -> Array[String]
 pub fn ReviewLog::equal(Self, Self) -> Bool
@@ -281,6 +298,7 @@ pub fn ReviewLog::new() -> Self
 pub fn ReviewLog::push(Self, ReviewEvent) -> Unit
 pub fn ReviewLog::to_jsonl(Self) -> String
 
+#derive(@debug.Debug)
 pub(all) struct SimConfig {
   days : Int32
   new_per_day : Int32
@@ -288,9 +306,10 @@ pub(all) struct SimConfig {
   desired_retention : Double
   grade_fn : (CardState) -> Grade
   seed : Int64
-} derive(@debug.Debug)
+}
 pub fn SimConfig::default() -> Self
 
+#derive(@debug.Debug)
 pub(all) struct SimDay {
   day : Int32
   new_cards : Int32
@@ -298,20 +317,22 @@ pub(all) struct SimDay {
   reviewed : Int32
   backlog : Int32
   retained : Int32
-} derive(@debug.Debug)
+}
 
+#derive(@debug.Debug)
 pub(all) struct SimResult {
   days : Array[SimDay]
   total_reviews : Int32
   max_backlog : Int32
   final_backlog : Int32
-} derive(@debug.Debug)
+}
 
+#derive(@debug.Debug)
 pub(all) struct Sm2 {
   ease_factor : Double
   interval_days : Double
   repetitions : Int32
-} derive(@debug.Debug)
+}
 pub fn Sm2::new() -> Self
 pub fn Sm2::with_ease(Double) -> Self
 pub impl Scheduler for Sm2

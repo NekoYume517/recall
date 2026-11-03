@@ -18,11 +18,12 @@
 /// 三个字段是**默认值/初值**，不是当前卡的状态：真实状态在 `CardState`
 /// 里（EF 存 `difficulty`、间隔存 `interval_days`、repetitions 存 `reps`）。
 /// 之所以仍然保留这三个字段：API.md 要求，且便于构造"非默认初值"的实例做实验。
+#derive(Debug)
 pub(all) struct Sm2 {
   ease_factor : Double // 默认 2.5，下限 1.3
   interval_days : Double
   repetitions : Int32
-} derive(Debug)
+}
 
 ///|
 /// EF 下限。低于它间隔增长会退化成 1.3 倍，SM-2 原文定为 1.3。

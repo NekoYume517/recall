@@ -23,20 +23,22 @@
 ///
 /// `index` 是出问题的权重下标（0..18 为 FSRS-5 公式使用的范围）；
 /// `value` 是读到的值；`why` 是人话解释。
+#derive(Debug)
 pub(all) struct FsrsWeightIssue {
   index : Int32
   value : Double
   why : String
-} derive(Debug)
+}
 
 ///|
 /// 权重校验结果：合法（`Ok`）或问题列表（`Err`）。
 ///
 /// 多个问题**全部收集**而不是遇错即停——用户一次性修完比改一个跑一次快。
+#derive(Debug)
 pub(all) enum FsrsWeightCheck {
   Valid
   Invalid(Array[FsrsWeightIssue])
-} derive(Debug)
+}
 
 ///|
 /// 检查一个 Double 是否有限（非 NaN / ±Infinity）。

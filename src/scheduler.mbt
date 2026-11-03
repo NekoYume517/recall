@@ -82,10 +82,11 @@ pub trait Scheduler {
 ///
 /// 权重不公开，避免短数组直构或外部修改导致公式越界。
 /// 使用 `weights()` 读取独立快照；目标保持率是只读标量。
+#derive(Debug)
 pub struct Fsrs {
   priv w : Array[Double]
   desired_retention : Double // 默认 0.9
-} derive(Debug)
+}
 
 ///|
 /// FSRS-5 官方默认权重。
@@ -188,11 +189,12 @@ pub fn Fsrs::with_params_and_retention(
 /// MoonBit 没有 trait object，CLI 又要按名字选算法，所以用枚举把三种
 /// 具体类型装起来；`AnyScheduler` 自己也 `impl Scheduler`，
 /// 因此任何 `[T : Scheduler]` 泛型函数都能直接吃它，无需另写一份。
+#derive(Debug)
 pub(all) enum AnyScheduler {
   Sm2(Sm2)
   Fsrs(Fsrs)
   Leitner(Leitner)
-} derive(Debug)
+}
 
 ///|
 /// 按名字构造调度器。未知名字退回 Leitner（最保守的基线），不抛错——

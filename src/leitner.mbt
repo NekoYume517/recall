@@ -31,10 +31,11 @@ pub fn leitner_default_intervals() -> Array[Double] {
 ///
 /// `boxes` 与 `intervals` 理论上应当等长；构造器保证这一点，
 /// 读取间隔时再用 `min(box, intervals.length())` 兜底，避免越界。
+#derive(Debug)
 pub(all) struct Leitner {
   boxes : Int32 // 默认 5
   intervals : Array[Double] // 每盒间隔天数，默认 [1, 2, 4, 8, 16]
-} derive(Debug)
+}
 
 ///|
 /// 默认 Leitner：5 盒，间隔 1/2/4/8/16 天。

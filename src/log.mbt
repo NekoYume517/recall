@@ -10,26 +10,29 @@
 
 ///|
 /// 一次复习事件。
+#derive(Debug)
 pub(all) struct ReviewEvent {
   card_id : String
   reviewed_at : Timestamp // 实际复习时刻
   due_at : Timestamp // 当时系统认为的到期时间（用于计算 overdue）
   grade : Grade
   elapsed_days : Double // 距上次复习的天数；首次为 0
-} derive(Debug)
+}
 
 ///|
 /// 有序事件集合。保持插入顺序（文件里的行序）。
+#derive(Debug)
 pub(all) struct ReviewLog {
   events : Array[ReviewEvent]
-} derive(Debug)
+}
 
 ///|
 /// 日志读写错误。带行号，方便用户直接定位文件问题。
+#derive(Debug)
 pub(all) suberror LogError {
   BadLine(Int32, String)
   BadTimestamp(Int32, String)
-} derive(Debug)
+}
 
 ///|
 /// `elapsed_days` 的 JSON 字段名。
