@@ -106,8 +106,30 @@ pub fn seconds_per_day() -> Double {
 
 ///|
 /// 两个时间戳之间相差多少天（可正可负）。
+///
+/// **先各自转 Double 再相减，不能先做 Int64 减法**（N-1，2026-11-04 审计）。
+///
+/// 旧实现是 `(to - from).to_double()`：差值一旦超出 Int64 域就**回绕**，
+/// 符号还会翻转。实测：
+///
+///     days_between(-9223372036854775808, 0)                  -> -1.0675e14（应为正）
+///     days_between(-9223372036854775808, 9223372036854775807) -> -1.157e-5
+///
+/// 同源后果（库级构造 `CardState` 时）：
+///   - `overdue_days(due=INT64_MIN, now=0)` 得 0，而 `is_due` 为 true ——
+///     已到期却"零逾期"，两个字段自相矛盾；
+///   - Leitner 的 `retrievability(due=Int64.MAX)` 对**未到期**卡返回 0
+///     （应 1.0），而 FSRS 同一状态正确返回 1。
+///
+/// 可达性：JSONL 时间戳域是 [-6.2e10, 2.53e11]，差值不溢出，所以 CLI 走不到；
+/// 但 `CardState` 是 `pub(all)`、`Timestamp` 是 `pub type`，库级调用可达。
+///
+/// Double 域减法的精度说明：2^63 量级整数在 Double 里保留 53 位有效位，
+/// 差值的绝对量级（~1e14 天）已超出精确表示范围，但**符号与量级正确**——
+/// 调用方只拿它做逾期天数比较与夹取，这两点足够；而旧的 Int64 回绕给出的
+/// 是符号翻转的垃圾值，连量级都不对。
 pub fn days_between(from : Timestamp, to : Timestamp) -> Double {
-  (to - from).to_double() / seconds_per_day()
+  (to.to_double() - from.to_double()) / seconds_per_day()
 }
 
 ///|

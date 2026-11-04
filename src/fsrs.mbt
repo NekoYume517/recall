@@ -280,12 +280,36 @@ pub fn stability_after_lapse(
   s : Double,
   r : Double,
 ) -> Double {
+  // ── 前置守卫：非正 / 非有限的 S 直接回下限（N-2，2026-11-04 审计） ──
+  //
+  // 与成功路径 `stability_after_success`（RC-7 / 307ebf2）完全对称。
+  // 那条路径有守卫，这条漏了，于是同族公式在非有限 S 上行为不一致：
+  //
+  //     stability_after_success(w, 5.0, NaN, 0.9)  ->  0.1     （有守卫）
+  //     stability_after_lapse  (w, 5.0, NaN, 0.9)  ->  NaN     （漏守卫）
+  //     stability_after_lapse  (w, 5.0, +Inf, 0.9) ->  +Inf
+  //
+  // 为什么必须修：公式含 `(S+1)^w[13]`，S = NaN 时它是 NaN，S = +Inf 时
+  // 是 +Inf；收尾的 `next < 0.1` 对 NaN 为 **false**，NaN 原样返回，
+  // 「稳定性有 0.1 下限」的承诺失效，NaN 会向下游扩散（`interval_days(NaN)`
+  // 给出 1 天，静默把「无记忆」当成「刚学完」）。
+  //
+  // 可达性：`step` 的 `is_first || s <= 0.0` 挡住调度器路径，CLI 不可达；
+  // 但这是公开公式入口（API.md 3.2），库级直接调用（自备权重实验、
+  // 外部状态修复、测试辅助）可达 —— 判级理由与 RC-7 当时一致。
+  //
+  // 只夹 `s <= 0` 与非有限值：正数（包括 1e-300 这类极小值）一律走公式，
+  // 保持公式语义不被守卫改写。
+  if s.is_nan() || s <= 0.0 || s == 1.0 / 0.0 || s == -1.0 / 0.0 {
+    return 0.1
+  }
   let base = w[11] // w[11]：基准
   let difficulty_term = @math.pow(d, -w[12]) // w[12]：难度指数
   let stability_term = @math.pow(s + 1.0, w[13]) - 1.0 // w[13]：原稳定性幂次
   let retrievability_term = @math.exp(w[14] * (1.0 - r)) // w[14]：R 修正
   let next = base * difficulty_term * stability_term * retrievability_term
-  if next < 0.1 {
+  if next.is_nan() || next < 0.1 {
+    // NaN 一并落到下限：即使 s 合法，极端 w 也可能让中间项产出非有限值
     0.1
   } else if next > s {
     // 遗忘不能提高已有稳定性。非法外来 S<0.1 仍遵守数值下限。
