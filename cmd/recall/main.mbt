@@ -496,9 +496,9 @@ fn retention_hint(sched_name : String, requested : Double) -> String {
     return ""
   }
   if requested.is_nan() || requested <= 0.0 || requested >= 1.0 {
-    "提示: --retention \{fmt_float(requested, 2)} 无效（合法区间 (0,1)），已按默认 0.9 生效"
+    "提示: --retention \{fmt_float(requested, 4)} 无效（合法区间 (0,1)），已按默认 0.9 生效"
   } else {
-    "提示: --retention \{fmt_float(requested, 2)} 超出 [0.5,0.99]，已按 \{fmt_float(eff, 2)} 生效"
+    "提示: --retention \{fmt_float(requested, 4)} 超出 [0.5,0.99]，已按 \{fmt_float(eff, 2)} 生效"
   }
 }
 
@@ -1028,8 +1028,36 @@ fn cmd_simulate(args : Args) -> Int32 {
     println("用法错误: --new-per-day 必须非负")
     return 2
   }
+  // **量级守卫**（N-3，2026-11-04 审计）。
+  //
+  // 旧实现只拦负数，于是 `--new-per-day 100000000` 让模拟器逐张 push
+  // 一亿张卡，wasm 分配器直接放弃：
+  //
+  //     RuntimeError: unreachable
+  //         at tlsf/growMemory ... at moonbit.gc.malloc
+  //     exit 1
+  //
+  // 这不是「慢」，是**进程级崩溃**（wasm trap），而项目自己的注释
+  // （main.mbt 的 `--buckets` 守卫）已经把这类情况定性为「应拦下而不是
+  // unreachable 崩溃」。同类守卫一览（保持一致口径）：
+  //   --days <= 100000（每次模拟的日数）
+  //   --buckets <= 10000（分桶数）
+  //   --new-per-day / --review-limit <= 100000（每张卡每天一条记录的量级）
+  // 100000 张/天已远超任何真实学习场景（一年也才 3650 万张），不误伤。
+  if new_per_day > 100000 {
+    println(
+      "用法错误: --new-per-day 必须 <= 100000（模拟器逐张建卡，超出会耗尽内存），得到 \{new_per_day}",
+    )
+    return 2
+  }
   if review_limit < 0 {
     println("用法错误: --review-limit 必须非负（0 表示不限）")
+    return 2
+  }
+  if review_limit > 100000 {
+    println(
+      "用法错误: --review-limit 必须 <= 100000（模拟器逐张复习，超出会耗尽内存），得到 \{review_limit}",
+    )
     return 2
   }
   let cfg : @lib.SimConfig = {
@@ -1403,6 +1431,15 @@ fn cmd_advice(args : Args) -> Int32 {
     println("用法错误: --review-limit 必须非负（0 表示不限）")
     return 2
   }
+  // --review-limit 同时是 advice 的**扫描上界**（探测次数随它增长），
+  // 所以它比 simulate 更敏感：`--review-limit 100000000` 会先在第一发探测
+  // 里 wasm 分配崩溃（N-3）。守卫阈值与 simulate 对齐。
+  if review_limit > 100000 {
+    println(
+      "用法错误: --review-limit 必须 <= 100000（它既是复习上限也是扫描上界，超出会耗尽内存），得到 \{review_limit}",
+    )
+    return 2
+  }
   if target_backlog < 0 {
     println("用法错误: --target-backlog 必须非负")
     return 2
@@ -1522,6 +1559,56 @@ fn main {
     j = j + 1
   }
   let args = parse_args(tail)
+  // **未知参数键报错，不静默忽略**（N-5，2026-11-04 审计）。
+  //
+  // 旧实现把任意 `--xxx` 收进 params/flags，谁也不校验，于是
+  //
+  //     recall simulate --days 3 --dys 10     ->  静默跑默认 90 天，exit 0
+  //     recall simulate --bogus 1             ->  同上
+  //
+  // 拼错一个键名、或把别的子命令的键带过来，用户拿到的是一份**跑错了的
+  // 实验结果**，而退出码是 0。对照同类输入：`--days abc` 报用法错误 exit 2、
+  // `--days=`（空值）也 exit 2 —— 三种「提供了但不对」的形态里只有「键名
+  // 不认识」是静默的，这是三态不一致（上一轮 R-D 只修了 `=` 切分）。
+  //
+  // 每个子命令的键清单来自它真正读取的那些（见各 `cmd_*`）。
+  let allowed : Array[String] = match sub {
+    "replay" => ["log", "scheduler", "json", "anki"]
+    "compare" => ["log", "a", "b"]
+    "simulate" =>
+      [
+        "scheduler", "days", "new-per-day", "review-limit", "policy", "seed", "retention",
+      ]
+    "advice" =>
+      [
+        "scheduler", "days", "review-limit", "target-backlog", "policy", "retention",
+        "seed",
+      ]
+    "stats" => ["log"]
+    "curve" => ["log", "buckets"]
+    _ => []
+  }
+  if allowed.length() > 0 {
+    let unknown : Array[String] = []
+    for key, _ in args.params {
+      if !allowed.contains(key) {
+        unknown.push(key)
+      }
+    }
+    for key, _ in args.flags {
+      if !allowed.contains(key) {
+        unknown.push(key)
+      }
+    }
+    if unknown.length() > 0 {
+      let unknown_text = unknown.join(", ")
+      let allowed_text = allowed.join(", ")
+      println(
+        "用法错误: 未知参数 \{unknown_text}（\{sub} 接受: \{allowed_text}）",
+      )
+      @sys.exit(2)
+    }
+  }
   let code = match sub {
     "replay" => cmd_replay(args)
     "compare" => cmd_compare(args)
