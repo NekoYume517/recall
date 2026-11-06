@@ -17,6 +17,20 @@ pub(all) struct ReviewEvent {
   due_at : Timestamp // 当时系统认为的到期时间（用于计算 overdue）
   grade : Grade
   elapsed_days : Double // 距上次复习的天数；首次为 0
+  /// **原始评分整数**（RJ-R，2026-11-07 组委会验收意见）。
+  ///
+  /// Grade 是 4 档枚举，JSONL 的 grade 是 0..5 的 6 值刻度：
+  /// 1|2 都归并为 Hard、4|5 都归并为 Easy。旧实现只存枚举，
+  /// 写回时用代表值 2/5，于是原文 1 变 2、4 变 5 ——
+  /// 申报承诺的「无损复习日志」在评分值上被证伪（组委会驳回意见）。
+  ///
+  /// 调度语义仍由 grade 枚举驱动（1 与 2 的调度行为相同，这是 FSRS/SM-2
+  /// 的定义）；grade_raw 只为**日志保真**服务：from_jsonl 记录原文，
+  /// to_jsonl 写回原文，ReviewLog::from_jsonl(to_jsonl(log)) 逐字节
+  /// 恒等。非 JSONL 路径（
+  /// new 构造）取 grade.to_int() 代表值 ——
+  /// 那些调用点本来就没有「原文」可保。
+  grade_raw : Int32
 }
 
 ///|
@@ -74,7 +88,34 @@ pub fn ReviewEvent::new(
   elapsed_days : Double,
 ) -> ReviewEvent {
   let e = if elapsed_days < 0.0 { 0.0 } else { elapsed_days }
-  { card_id, reviewed_at, due_at, grade, elapsed_days: e, }
+  // 无「原文」可保的构造路径：grade_raw 取该档的代表值。
+  // JSONL 解析走 new_with_raw，那里才记录用户的原始整数。
+  {
+    card_id,
+    reviewed_at,
+    due_at,
+    grade,
+    elapsed_days: e,
+    grade_raw: grade.to_int(),
+  }
+}
+
+///|
+/// 带原始评分整数的构造：**JSONL 解析专用**（RJ-R）。
+///
+/// grade 仍经 Grade::from_int 归一化供调度使用；grade_raw 保存
+/// JSON 里的原始整数（0..5 及夹到两端的越界值），to_jsonl 原样写回。
+/// 这是「无损日志」承诺的实现落点。
+pub fn ReviewEvent::new_with_raw(
+  card_id : String,
+  reviewed_at : Timestamp,
+  due_at : Timestamp,
+  grade : Grade,
+  grade_raw : Int32,
+  elapsed_days : Double,
+) -> ReviewEvent {
+  let e = if elapsed_days < 0.0 { 0.0 } else { elapsed_days }
+  { card_id, reviewed_at, due_at, grade, elapsed_days: e, grade_raw, }
 }
 
 ///|
@@ -182,7 +223,9 @@ fn event_to_json(ev : ReviewEvent) -> Json {
   m[key_card_id()] = Json::string(ev.card_id)
   m[key_reviewed_at()] = Json::number(ev.reviewed_at.to_double())
   m[key_due_at()] = Json::number(ev.due_at.to_double())
-  m[key_grade()] = Json::number(ev.grade.to_int().to_double())
+  // **无损写回**（RJ-R）：写原始评分整数而不是枚举代表值 —— 原文 1/4
+  // 不再变成 2/5。grade_raw 由 from_jsonl 记录、new 构造时取代表值。
+  m[key_grade()] = Json::number(ev.grade_raw.to_double())
   m[key_elapsed_days()] = Json::number(ev.elapsed_days)
   Json::object(m)
 }
@@ -284,7 +327,13 @@ fn event_from_line(
   let grade_num = field_double(obj, key_grade(), line_no)
   let elapsed = field_double(obj, key_elapsed_days(), line_no)
   let grade = Grade::from_int(@math.round(grade_num).to_int())
-  ReviewEvent::new(card_id, reviewed_at, due_at, grade, elapsed)
+  // RJ-R：原始评分整数进入事件（无损日志）。四舍五入后的整数就是
+  // 原文（JSON 数字一行一个值，grade 字段不存在小数形态的合法输入 ——
+  // 1.5 会被 round 成 2 写回；这与「评分值是整数刻度」的契约一致）。
+  let grade_raw_val = @math.round(grade_num).to_int()
+  ReviewEvent::new_with_raw(
+    card_id, reviewed_at, due_at, grade, grade_raw_val, elapsed,
+  )
 }
 
 ///|

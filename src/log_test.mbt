@@ -486,14 +486,14 @@ test "往返只做一次归一化，之后字节稳定（幂等）" {
 }
 
 ///|
-test "归一化只影响 grade 字段，其余字段逐字节不变" {
-  // fixture 里 grade 只有 3 和 4 两种；3→Good→3 不变，4→Easy→5 变化。
-  // 其余（card_id / 时间戳 / elapsed）必须原样保留。
+test "RJ-R: 评分值无损——grade 原文在 to_jsonl 后保持不变" {
+  // 组委会验收意见（2026-11-07）：申报承诺无损复习日志，但评分值在
+  // 读写往返后发生变化。旧实现 4→Easy→5、1→Hard→2（有损归一化）。
+  // 修复后 grade_raw 保存原文，to_jsonl 写回原文，往返逐字节恒等。
   let original = example_jsonl()
   let normalized = parse_example().to_jsonl()
-  // 把原始 fixture 里的 "grade":4 换成 "grade":5 后，应当与输出完全一致
-  let expected = original.replace_all(old="\"grade\":4", new="\"grade\":5")
-  inspect(normalized, content=expected)
+  // 输出与输入完全一致（fixture 里 grade 有 3 和 4 两种，4 不得变 5）
+  inspect(normalized, content=original)
 }
 
 ///|
