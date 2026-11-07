@@ -30,7 +30,11 @@ pub(all) struct ReviewEvent {
   /// 恒等。非 JSONL 路径（
   /// new 构造）取 grade.to_int() 代表值 ——
   /// 那些调用点本来就没有「原文」可保。
-  grade_raw : Int32
+  ///
+  /// RJ-1b（2026-11-08 审计）：Int32 承载不了超域原文（2500000000 饱和成
+  /// 2147483647，首次往返即非恒等），扩为 Int64 —— JSON 数字是 Double，
+  /// Int64 无损承载到 2^53；超出精确整数域的输入由 from_jsonl 拒收。
+  grade_raw : Int64
 }
 
 ///|
@@ -96,7 +100,7 @@ pub fn ReviewEvent::new(
     due_at,
     grade,
     elapsed_days: e,
-    grade_raw: grade.to_int(),
+    grade_raw: grade.to_int().to_int64(),
   }
 }
 
@@ -111,7 +115,7 @@ pub fn ReviewEvent::new_with_raw(
   reviewed_at : Timestamp,
   due_at : Timestamp,
   grade : Grade,
-  grade_raw : Int32,
+  grade_raw : Int64,
   elapsed_days : Double,
 ) -> ReviewEvent {
   let e = if elapsed_days < 0.0 { 0.0 } else { elapsed_days }
@@ -330,7 +334,22 @@ fn event_from_line(
   // RJ-R：原始评分整数进入事件（无损日志）。四舍五入后的整数就是
   // 原文（JSON 数字一行一个值，grade 字段不存在小数形态的合法输入 ——
   // 1.5 会被 round 成 2 写回；这与「评分值是整数刻度」的契约一致）。
-  let grade_raw_val = @math.round(grade_num).to_int()
+  //
+  // RJ-1b（2026-11-08 审计）：grade_raw 用 Int64 承载。Int32 会把
+  // 2500000000 饱和成 2147483647，首次往返即非恒等。JSON 数字是
+  // Double，|原文| > 2^53 时 round 结果已不精确 —— 装不下就报错，
+  // 与 elapsed_days 的有限性原则一致，不静默改值。
+  let rounded = @math.round(grade_num)
+  if rounded.is_nan() ||
+    (rounded - rounded).is_nan() ||
+    rounded < -9007199254740992.0 ||
+    rounded > 9007199254740992.0 {
+    raise BadLine(
+      line_no,
+      "字段 grade 必须是可精确表示的整数（|grade| ≤ 2^53），得到 \{grade_num}",
+    )
+  }
+  let grade_raw_val = rounded.to_int64()
   ReviewEvent::new_with_raw(
     card_id, reviewed_at, due_at, grade, grade_raw_val, elapsed,
   )
