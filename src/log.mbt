@@ -186,10 +186,14 @@ pub fn ReviewLog::by_card(self : ReviewLog) -> Map[String, Array[ReviewEvent]] {
       indexed.push((i, ev))
     }
     indexed.sort_by(fn(a, b) {
-      let d = a.1.reviewed_at - b.1.reviewed_at
-      if d < 0L {
+      // RJ-2（2026-11-08 审计）：不做减法 —— Int64 极值相减回绕
+      // （MAX - MIN = -1）会让排序翻转，这是 N-1（days_between，
+      // dcbdd7b）修复时漏掉的同源比较器。直接比较无回绕。
+      let ta = a.1.reviewed_at
+      let tb = b.1.reviewed_at
+      if ta < tb {
         -1
-      } else if d > 0L {
+      } else if ta > tb {
         1
       } else {
         a.0 - b.0
