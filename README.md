@@ -2,7 +2,7 @@
 
 **间隔重复调度引擎：SM-2 / FSRS / Leitner 的统一实现，加日志重放与积压预测。**
 
-[![MoonBit](https://img.shields.io/badge/MoonBit-0.1.20261012-blueviolet)](https://www.moonbitlang.com/)
+[![MoonBit](https://img.shields.io/badge/MoonBit-0.1.20261102-blueviolet)](https://www.moonbitlang.com/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
 ---

@@ -57,6 +57,7 @@ pub(all) struct ReviewEvent {
   due_at : Timestamp           // 当时系统认为的到期时间（用于计算 overdue）
   grade : Grade
   elapsed_days : Double        // 距上次复习的天数；首次为 0
+  grade_raw : Int64            // JSON 原始评分整数（无损日志）；new 构造取代表值
 }
 
 pub(all) struct ReviewLog {
@@ -86,7 +87,7 @@ JSONL 每行格式（**字段名固定**）：
 {"card_id":"c1","reviewed_at":1700000000,"due_at":1699999000,"grade":3,"elapsed_days":1.0}
 ```
 
-### ⚠️ `grade` 字段是有损归一化的
+### `grade` 字段：调度归一化 + 无损日志（RJ-R / RJ-1b）
 
 `Grade` 是 4 档枚举，但 JSON 里的 `grade` 是 0..5 的整数：
 
@@ -95,15 +96,20 @@ from_int:  0 → Again, 1|2 → Hard, 3 → Good, 4|5 → Easy
 to_int:    Again=0, Hard=2, Good=3, Easy=5
 ```
 
-因此 **`"grade":4` 读入后写回会变成 `"grade":5`**（两者都归一化为 Easy，输出时用 `Easy` 的代表值 5）。
+**调度语义**按归一化后的枚举驱动（`1` 与 `2` 的调度行为相同是
+FSRS/SM-2 的定义）；**日志保真**由 `grade_raw` 保证：from_jsonl 记录
+JSON 原文（round 后的整数），to_jsonl 原样写回。因此：
 
-这**不是 bug**，是「4 档枚举 ↔ 6 值整数」的固有映射。但写往返测试时要注意：
+- ✅ 「JSONL 往返逐字节一致」——含 `grade:1/4` 的输入也原样写回
+  （`1→1`、`4→4`，不再是旧的 `1→2`、`4→5` 有损行为）
+- ✅ `grade_raw` 是 Int64，能无损承载到 ±2^53（2026-11-08 审计 RJ-1b：
+  旧版用 Int32，`"grade":2500000000` 会饱和成 2147483647）
+- ❌ `|grade| > 2^53`（Double 精确整数域之外）的输入在解析时报数据
+  错误，而不是静默改值
+- ✅ 小数 `grade` 按「评分是整数刻度」的契约 round 后写回该整数
+  （`4.6 → 5`）
 
-- ❌ 「JSONL 往返逐字节一致」——对含 `grade:4` 的输入会失败
-- ✅ 「往返**幂等**」——第 2 次和第 3 次序列化完全一致
-- ✅ 「只有 `grade` 字段变化，其余字段逐字节不变」
-
-`elapsed_days` 同理：`0` 与 `0.0` 的文本形式可能不同，按浮点比较而非字符串比较。
+`elapsed_days` 同理注意：`0` 与 `0.0` 的文本形式可能不同，按浮点比较而非字符串比较。
 
 ## 3. 调度器接口 `src/scheduler.mbt`
 
