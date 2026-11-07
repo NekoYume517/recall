@@ -279,11 +279,11 @@ pub(all) struct ReviewEvent {
   due_at : Int64
   grade : Grade
   elapsed_days : Double
-  grade_raw : Int32
+  grade_raw : Int64
 }
 pub fn ReviewEvent::equal(Self, Self) -> Bool
 pub fn ReviewEvent::new(String, Int64, Int64, Grade, Double) -> Self
-pub fn ReviewEvent::new_with_raw(String, Int64, Int64, Grade, Int32, Double) -> Self
+pub fn ReviewEvent::new_with_raw(String, Int64, Int64, Grade, Int64, Double) -> Self
 pub fn ReviewEvent::overdue_days(Self) -> Double
 
 #derive(@debug.Debug)
