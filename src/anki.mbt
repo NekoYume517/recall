@@ -25,10 +25,14 @@
 /// Unix 秒时间戳 → ISO8601（UTC，"YYYY-MM-DD HH:MM:SS"）。
 ///
 /// **年份宽度**：不足 4 位补零到 4 位（如 `0001-01-01`），恰好 4 位原样，
-/// **超过 4 位原样输出、不截断**（如 `10099-12-06`、`1587287-03-17`）。
+/// **超过 4 位原样输出、不截断**（如 `10099-12-06`、`292277026596-12-04`）。
 /// `due` 可以合法地越过 9999 年（JSONL 的 reviewed_at 上限加
 /// `max_interval_days()`），截断会把未来日期说成公元 99 年，因此保留完整
 /// 年份。详见函数体内关于 RC-6 的说明。
+///
+/// **完整 Int64 域**（RJ-A1）：`ts` 取 Int64 全域都按 Hinnant 算法精确
+/// 换算，不饱和、不回绕——`Int64.MAX` 给出 `292277026596-12-04 15:30:07`。
+/// 正确性由 Python 版独立参考实现复算的边界向量锚定。
 ///
 /// 纯手写历法换算（ civil_from_days 算法，Howard Hinnant 版本），
 /// 不引入任何日期库。正确性由 roundtrip 测试锚定若干已知日期。
@@ -37,21 +41,43 @@ pub fn timestamp_to_iso8601(ts : Timestamp) -> String {
   // 向零截断。例如 -1 秒应为 1969-12-31 23:59:59 UTC：
   // 向零除法给出第 0 天、余数 -1；floor 则是第 -1 天、日内 86399 秒。
   // 1900-02-28 00:00:00 UTC = -2203977600 秒，恰为整天，本身不触发此差异。
+  //
+  // ⚠️ 天数字段必须全程 Int64（RJ-A1，2026-11-10 审计）：旧实现把天数
+  // `.to_int()` 压进 Int32，ts ≥ 185,542,587,187,200 秒（= 2^31 天）后
+  // 静默回绕——Int64.MAX 曾被算成 1587287-03-17 15:30:07（真值
+  // 292277026596-12-04 15:30:07），回绕产物还被测试与 API.md 当域事实
+  // 锁死。`API.md` 承诺完整 Int64 时间戳解析，因此这里不放饱和/不报错，
+  // 直接按 Int64 算到底：Hinnant 各中间量（era/doe/yoe）都远小于 2^31，
+  // 只有 `days` / `y` / `year` 需要 Int64 承载。
   let raw_days = ts / 86400L
   let rem = ts % 86400L
-  let days = (if rem < 0L { raw_days - 1L } else { raw_days }).to_int() // floor
+  let days : Int64 = if rem < 0L { raw_days - 1L } else { raw_days } // floor
   let secs_of_day = if rem < 0L { rem + 86400L } else { rem }
-  // civil_from_days：天数 → (y, m, d)
-  let z = days + 719468
-  let era = (if z >= 0 { z } else { z - 146096 }) / 146097
-  let doe = z - era * 146097 // [0, 146096]
-  let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365 // [0, 399]
-  let y = yoe + era * 400
-  let doy = doe - (365 * yoe + yoe / 4 - yoe / 100) // [0, 365]
-  let mp = (5 * doy + 2) / 153 // [0, 11]
-  let d = doy - (153 * mp + 2) / 5 + 1 // [1, 31]
-  let m = if mp < 10 { mp + 3 } else { mp - 9 } // [1, 12]
-  let year = if m <= 2 { y + 1 } else { y }
+  // civil_from_days：天数 → (y, m, d)。
+  //
+  // ⚠️ 除法必须显式 floor，不能依赖截断除法加经验修正（RJ-A1 第二层）：
+  // Hinnant 原式的 `era = (z >= 0 ? z : z - 146096) / 146097` 依赖
+  // 「`z - 146096` 与 z 同余」这个并不成立的前提（146096 = 146097 - 1，
+  // 减它会把余数 +1），在极端负天数处 era 会偏 1 天——实测 Int64.MIN
+  // 因此差一天（01-27 vs 真值 01-28）。这里改成显式 floor_div：
+  // 负数先减 (b-1) 再截断，等价于数学 floor，全域正确。
+  let floor_div = fn(a : Int64, b : Int64) -> Int64 {
+    if a >= 0L {
+      a / b
+    } else {
+      (a - (b - 1L)) / b
+    }
+  }
+  let z = days + 719468L
+  let era = floor_div(z, 146097L)
+  let doe = z - era * 146097L // [0, 146096]
+  let yoe = floor_div(doe - doe / 1460L + doe / 36524L - doe / 146096L, 365L) // [0, 399]
+  let y = yoe + era * 400L
+  let doy = doe - (365L * yoe + yoe / 4L - yoe / 100L) // [0, 365]
+  let mp = (5L * doy + 2L) / 153L // [0, 11]
+  let d = doy - (153L * mp + 2L) / 5L + 1L // [1, 31]
+  let m = if mp < 10L { mp + 3L } else { mp - 9L } // [1, 12]
+  let year = if m <= 2L { y + 1L } else { y }
   let hh = secs_of_day / 3600L
   let mm = secs_of_day % 3600L / 60L
   let ss = secs_of_day % 60L
@@ -63,7 +89,11 @@ pub fn timestamp_to_iso8601(ts : Timestamp) -> String {
       s
     }
   }
-  let ystr = if year < 0 { "-" + (-year).to_string() } else { year.to_string() }
+  let ystr = if year < 0L {
+    "-" + (-year).to_string()
+  } else {
+    year.to_string()
+  }
   // 年份宽度规则（RC-6，2026-10-27 修正描述）：
   //   - 不足 4 位 → 补零到 4 位（0001 年写成 "0001"）
   //   - 恰好 4 位 → 原样
@@ -75,13 +105,14 @@ pub fn timestamp_to_iso8601(ts : Timestamp) -> String {
   //
   // 为什么保持不截断：`due` 可以合法地越过 9999 年——JSONL 允许的
   // reviewed_at 上限是 253402300799（9999-12-31 23:59:59），加上
-  // max_interval_days() = 36500 天即 10099 年（Int64 上限对应 1587287 年）。
-  // 截断会把 10099 年写成 "0099"（把未来的到期日说成公元 99 年），
-  // 比"多一位数字"更糟。因此保留现状并锁定测试。
+  // max_interval_days() = 36500 天即 10099 年；完整 Int64 上限对应
+  // 292277026596 年（RJ-A1 修正：旧注写 1587287 年，是 Int32 回绕的
+  // 产物，不是域事实）。截断会把 10099 年写成 "0099"（把未来的到期日
+  // 说成公元 99 年），比"多一位数字"更糟。因此保留现状并锁定测试。
   let y4 = if ystr.length() < 4 {
     let zeros = 4 - ystr.length()
     let sb = StringBuilder()
-    if year < 0 {
+    if year < 0L {
       sb.write_string("-")
       for i = 0; i < zeros; i = i + 1 {
         sb.write_char('0')
@@ -98,7 +129,7 @@ pub fn timestamp_to_iso8601(ts : Timestamp) -> String {
     // 4 位与超 4 位都走这里：完整保留，不补也不截
     ystr
   }
-  "\{y4}-\{pad2(m.to_int64())}-\{pad2(d.to_int64())} \{pad2(hh)}:\{pad2(mm)}:\{pad2(ss)}"
+  "\{y4}-\{pad2(m)}-\{pad2(d)} \{pad2(hh)}:\{pad2(mm)}:\{pad2(ss)}"
 }
 
 // ---------------------------------------------------------------------------
