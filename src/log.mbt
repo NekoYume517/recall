@@ -289,6 +289,81 @@ fn field_timestamp(
 }
 
 ///|
+/// 从 JSON 值里取数字字段，并带回**原文**（`Json::Number` 的 `repr`）。
+///
+/// 只给 grade 用（RJ-A2，2026-11-10 审计）：JSON 数字解析成 Double 会
+/// 丢失原文——2^53+1 与 2^53 在 Double 上是同一个值，越界守卫看不见。
+/// 需要按字面判定「这是不是一个超过 2^53 的整数写法」时，只能看 repr。
+fn field_number_with_repr(
+  obj : Map[String, Json],
+  key : String,
+  line_no : Int32,
+) -> (Double, String?) raise LogError {
+  match obj.get(key) {
+    Some(Number(n, repr~)) =>
+      if n.is_nan() || (n - n).is_nan() {
+        raise BadLine(
+          line_no,
+          "字段 \{key} 必须是有限数字，得到非有限值",
+        )
+      } else {
+        (n, repr)
+      }
+    Some(_) => raise BadLine(line_no, "字段 \{key} 不是数字")
+    None => raise BadLine(line_no, "缺少字段 \{key}")
+  }
+}
+
+///|
+/// 字面是否为**纯整数写法**（可带前导负号，无小数点/指数），若是则返回
+/// 其十进制数字串（不含负号）；否则返回 None。
+///
+/// 只做形态判定，不做数值解析——数值交给调用方用 Int64 解析并在溢出时
+/// 按「原文超界」处理。
+fn integer_literal_digits(text : String) -> String? {
+  let s = text.trim().to_owned()
+  let body = if s.has_prefix("-") {
+    s.substring(start=1, end=s.length())
+  } else {
+    s
+  }
+  if body == "" {
+    return None
+  }
+  for c in body.to_array() {
+    if c < '0' || c > '9' {
+      return None
+    }
+  }
+  Some(body)
+}
+
+///|
+/// 用十进制数字串与 2^53 比较（避免 Int64 溢出：2^53 只有 16 位，
+/// 更长的串一定更大）。
+fn decimal_exceeds_2p53(digits : String) -> Bool {
+  // 2^53 = 9007199254740992，共 16 位
+  let t = if digits.length() > 1 && digits[0] == '0' {
+    // 允许 "0009007199254740993" 这类前导零写法
+    let mut i = 0
+    while i < digits.length() - 1 && digits[i] == '0' {
+      i = i + 1
+    }
+    digits.substring(start=i)
+  } else {
+    digits
+  }
+  if t.length() > 16 {
+    return true
+  }
+  if t.length() < 16 {
+    return false
+  }
+  // 同长度按字典序比较即可（数字串）
+  t > "9007199254740992"
+}
+
+///|
 /// 从 JSON 值里取浮点字段（`elapsed_days`）。
 ///
 /// 校验有限性：Infinity / NaN 的 `elapsed_days` 会让下游归桶溢出、保持率上界
@@ -332,7 +407,11 @@ fn event_from_line(
   let card_id = field_string(obj, key_card_id(), line_no)
   let reviewed_at = field_timestamp(obj, key_reviewed_at(), line_no)
   let due_at = field_timestamp(obj, key_due_at(), line_no)
-  let grade_num = field_double(obj, key_grade(), line_no)
+  let (grade_num, grade_repr) = field_number_with_repr(
+    obj,
+    key_grade(),
+    line_no,
+  )
   let elapsed = field_double(obj, key_elapsed_days(), line_no)
   let grade = Grade::from_int(@math.round(grade_num).to_int())
   // RJ-R：原始评分整数进入事件（无损日志）。四舍五入后的整数就是
@@ -352,6 +431,28 @@ fn event_from_line(
       line_no,
       "字段 grade 必须是可精确表示的整数（|grade| ≤ 2^53），得到 \{grade_num}",
     )
+  }
+  // **字面原文校验**（RJ-A2，2026-11-10 审计）：2^53+1（奇数）在 Double
+  // 上恰好等于 2^53（ties-to-even），上面的越界守卫看不见它 —— 于是
+  // 首次往返就把 9007199254740993 静默改写成 ...992，违背「|grade| > 2^53
+  // 报数据错误而不是静默改值」。纯整数写法必须按**原文**判容量：
+  // 超过 2^53 直接拒收（含 2^53+1 这类会被向下吸收的奇数）。
+  //
+  // 带小数/指数的写法不受此限——round 归一化是文档化行为（1.5 → 2），
+  // 不是静默改值。
+  match grade_repr {
+    Some(text) =>
+      match integer_literal_digits(text) {
+        Some(digits) =>
+          if decimal_exceeds_2p53(digits) {
+            raise BadLine(
+              line_no,
+              "字段 grade 必须是可精确表示的整数（|grade| ≤ 2^53），得到 \{text}",
+            )
+          }
+        None => ()
+      }
+    None => ()
   }
   let grade_raw_val = rounded.to_int64()
   ReviewEvent::new_with_raw(
