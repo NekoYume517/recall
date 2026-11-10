@@ -41,7 +41,7 @@ pub fn[T : Scheduler] replay_with(log : ReviewLog, s : T) -> ReplayResult {
   for cid in grouped.keys() {
     card_ids.push(cid)
   }
-  card_ids.sort()
+  card_ids.sort_by(fn(a, b) { a.lexical_compare(b) })
   let mut total_reviews = 0
   let mut total_lapses = 0
   let mut error_sum = 0.0
@@ -134,7 +134,7 @@ fn total_interval(res : ReplayResult) -> Double {
   for cid in res.final_states.keys() {
     ids.push(cid)
   }
-  ids.sort()
+  ids.sort_by(fn(a, b) { a.lexical_compare(b) })
   let mut sum = 0.0
   for cid in ids {
     let v = match res.final_states.get(cid) {
@@ -160,7 +160,7 @@ pub fn compare(
   for cid in ra.final_states.keys() {
     ids.push(cid)
   }
-  ids.sort()
+  ids.sort_by(fn(a, b) { a.lexical_compare(b) })
   let per_card : Array[(String, Double, Double)] = []
   for cid in ids {
     let va = match ra.final_states.get(cid) {

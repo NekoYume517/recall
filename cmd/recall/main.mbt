@@ -639,7 +639,7 @@ fn cmd_replay(args : Args) -> Int32 {
     for cid in res.final_states.keys() {
       ids.push(cid)
     }
-    ids.sort()
+    ids.sort_by(fn(a, b) { a.lexical_compare(b) })
     for cid in ids {
       match res.final_states.get(cid) {
         Some(st) => states.push(st)
@@ -654,7 +654,7 @@ fn cmd_replay(args : Args) -> Int32 {
     for cid in res.final_states.keys() {
       ids.push(cid)
     }
-    ids.sort()
+    ids.sort_by(fn(a, b) { a.lexical_compare(b) })
     let sb = StringBuilder()
     sb.write_string("{\"scheduler\":\"")
     sb.write_string(s.name())
@@ -721,7 +721,7 @@ fn cmd_replay(args : Args) -> Int32 {
     for cid in res.final_states.keys() {
       ids.push(cid)
     }
-    ids.sort()
+    ids.sort_by(fn(a, b) { a.lexical_compare(b) })
     for cid in ids {
       let st = match res.final_states.get(cid) {
         Some(v) => v
@@ -1279,13 +1279,18 @@ fn cmd_curve(args : Args) -> Int32 {
     4
   }
   let labels : Array[String] = []
-  for row in curve {
+  for i, row in curve {
     // 全零间隔的单桶 (0,0) 打成 "[0.0, 0.0)" 会是空区间记号
     if row.0 == 0.0 && row.1 == 0.0 {
       labels.push(zero_interval_label(row))
     } else {
+      // RB-A3（2026-11-10 审计）：**末桶是闭区间**——归桶时 elapsed 恰好
+      // 等于最大间隔的样本落在最后一桶（count_curve 用 <= 上界），标签
+      // 却打 `)` 会宣称最大值不在桶内，与样本归属自相矛盾。API.md §6
+      // 与 DEMO §6 正文也都写明「最后一桶闭区间」。
+      let close = if i + 1 == curve.length() { "]" } else { ")" }
       labels.push(
-        "[" + fmt_float(row.0, digits) + ", " + fmt_float(row.1, digits) + ")",
+        "[" + fmt_float(row.0, digits) + ", " + fmt_float(row.1, digits) + close,
       )
     }
   }

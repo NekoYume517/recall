@@ -50,7 +50,7 @@ pub fn compute_stats(log : ReviewLog) -> Array[CardStats] {
   for cid in grouped.keys() {
     ids.push(cid)
   }
-  ids.sort()
+  ids.sort_by(fn(a, b) { a.lexical_compare(b) })
   let out : Array[CardStats] = []
   for cid in ids {
     let events = match grouped.get(cid) {
@@ -134,7 +134,7 @@ pub fn retention_curve(
   for cid in grouped.keys() {
     ids.push(cid)
   }
-  ids.sort()
+  ids.sort_by(fn(a, b) { a.lexical_compare(b) })
   let mut max_elapsed = 0.0
   for cid in ids {
     let events = grouped[cid]

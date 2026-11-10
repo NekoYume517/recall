@@ -151,6 +151,23 @@ pub fn probe_final_backlog(
 /// 传递到这一层。测试 `advice_deterministic` 锁定。
 pub fn load_advice(s : AnyScheduler, req : AdviceRequest) -> AdviceResult {
   let hi = if req.review_limit > 0 { req.review_limit } else { 500 }
+  // **负目标按无效输入处理**（RJ-A5，2026-11-10 审计）：模拟器从空状态
+  // 开始、积压恒 ≥ 0，"目标 -1" 永远不可能达到，旧实现于是把 0 积压的
+  // 场景也说成「存量太大」（"10 天后仍有 0 张积压（目标 -1）——存量太大"）。
+  // CLI 早已守卫 target ≥ 0（main.mbt），但库级入口直接可达，且 API.md
+  // §5.1 承诺过「三个诚实分支」——这里如实拒绝，不编造结论。
+  if req.target_backlog < 0 {
+    let sim = simulate(s, req.to_config(0))
+    return {
+      new_per_day: 0,
+      simulation: sim,
+      final_backlog: probe_backlog(s, req, 0),
+      next_step_backlog: None,
+      search_lo: 0,
+      search_hi: hi,
+      summary: "目标积压 \{req.target_backlog} 无效：积压不可能为负。请传 >= 0 的目标（0 = 清空）。",
+    }
+  }
   // 边界检查：0 张新卡能否达标
   let lo_backlog = probe_backlog(s, req, 0)
   if lo_backlog > req.target_backlog {
