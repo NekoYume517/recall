@@ -203,6 +203,11 @@ EF 更新（每次复习都做，用更新前的 EF 算间隔）:
 （若误把 Again 当 `q=0`，会得到 `2.5 + (0.1-0.9) = 1.7`——这是错的，因为 `q=0` 不在映射表内。）
 
 `@math.round` 是 half-up：`round(2.5)=3`、`round(37.5)=38`。
+（记一笔：Python 的 `round` 是 half-to-even / 银行家舍入，`round(2.5)=2`。
+因此间隔恰好落在 `k+0.5` 时本实现可能比 py-fsrs 多 1 天。这是**已声明的
+刻意差异**——half-up 是直观的"四舍五入"，且与 SM-2 一侧的 `@math.round`
+一致；改它会让同一份代码里两套调度器用两套舍入。见
+`docs/implementation.md` 的同名小节。）
 
 ### 3.2 FSRS-style `src/fsrs.mbt`
 
@@ -284,9 +289,17 @@ pub impl Scheduler for Fsrs
              * (w[16] if g==4 else 1))
       D' 与 S' 从同一份旧状态独立计算，新 D 仅保存到输出状态。
 
-遗忘后的稳定性：
+遗忘后的稳定性（FSRS-5）：
   raw = w[11] * D^(-w[12]) * ((S+1)^w[13] - 1) * exp(w[14] * (1 - R))
-  S' = max(0.1, min(raw, S))   // 合法旧 S>=0.1 时，遗忘不会增加稳定性
+  cap = S / exp(w[17] * w[18])      // 短期上限（enable_short_term 开时）
+  S'  = max(0.1, min(raw, cap))
+
+  ⚠️ 上限是 **S / exp(w17·w18)**，不是裸 S。`min(raw, S)` 是 FSRS-4.5 的写法；
+     FSRS-5 只在短期调度**关闭**时才用它。本仓库的 `step` 对 elapsed < 1
+     是用 w17/w18 做短期更新的（即短期开着），所以两条分支必须同一个假设。
+     默认权重下 exp(w17·w18) = 1.40777，用错上限会让遗忘后的稳定性虚高最多
+     40.8%（D=3, S=22.75, R=0.05: 22.75 vs 官方 16.16），间隔随之偏长。
+     官方参考：py-fsrs 5.1.3 `Scheduler._next_forget_stability`。
 
 下次间隔：
   I = S / FACTOR * (desired_retention^(1/DECAY) - 1)
