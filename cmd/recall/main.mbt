@@ -427,6 +427,7 @@ fn usage_text() -> String {
     "", "选项:", "  --log            复习日志路径 (JSONL, 每行一个事件)",
     "  --scheduler      调度器: sm2 | fsrs | leitner", "  --a / --b        compare 的左右两侧调度器",
     "  --days           模拟天数 (默认 90, 上限 100000)", "  --new-per-day    每天新增卡片数 (默认 20)",
+    "  --days × --new-per-day 的乘积上限 100000 张（每次模拟逐日逐卡推进）",
     "  --review-limit   每天复习上限, 0 表示不限 (默认 200)", "  --policy         评分策略: optimistic | realistic | pessimistic (默认 realistic)",
     "  --buckets        保持率曲线分桶数 (默认 10, 上限 10000)", "  --retention      目标保持率 (默认 0.9, fsrs 有效区间 [0.5,0.99], 越界夹到边界)",
     "  --target-backlog advice 的积压目标, 张 (默认 0 = 清零)", "  --seed           模拟的伪随机种子 (默认 20240101, 64 位整数)",
@@ -533,6 +534,26 @@ fn days_range_error(days : Int32) -> String {
   }
   if days > 100000 {
     return "用法错误: --days 必须 <= 100000（模拟成本与天数十万倍成正比），得到 \{days}"
+  }
+  ""
+}
+
+///|
+/// `--days × --new-per-day` 的**乘积**守卫。
+///
+/// 三个单轴守卫各管一维（days ≤ 100000、new_per_day ≤ 100000、
+/// review_limit ≤ 100000），但一次 `simulate` 的成本是两轴的乘积，两个"合格"
+/// 的值乘起来可以进到天文量级：`--days 100000 --new-per-day 200` = 2000 万张卡，
+/// 实测 60 s 无输出也不退出——不崩、不报错，只是看起来挂住，比崩溃更难诊断。
+///
+/// 上限 100000 张的依据是实测曲线（4 万张 22 s、10 万张 159 s）与被接受的
+/// `advice --review-limit 500` 的 136 s（API.md §5.1）；边界值仍合法，比较用 `>`。
+/// 乘积用 `Int64`：`100000 × 100000` 在 `Int32` 里会绕成负数，那样守卫反而放行。
+/// 合法返回空串，非法返回错误消息。
+fn total_cards_error(days : Int32, new_per_day : Int32) -> String {
+  let cards = days.to_int64() * new_per_day.to_int64()
+  if cards > 100000L {
+    return "用法错误: --days × --new-per-day 必须 <= 100000 张（每次模拟逐日逐卡推进，实测 10 万张约 159 s），得到 \{days} × \{new_per_day} = \{cards}"
   }
   ""
 }
@@ -1079,6 +1100,22 @@ fn cmd_simulate(args : Args) -> Int32 {
     println(
       "用法错误: --review-limit 必须 <= 100000（模拟器逐张复习，超出会耗尽内存），得到 \{review_limit}",
     )
+    return 2
+  }
+  // **乘积守卫**（2026-11-12 审计）。上面三条都是单轴阈值，而一次模拟的成本是
+  // `days × new_per_day` 的乘积：实测（`moon 0.1.20261102`，`--review-limit 50`）
+  //
+  //     --days 2000  --new-per-day 20   4 万张    22 s
+  //     --days 5000  --new-per-day 20  10 万张   159 s
+  //     --days 100000 --new-per-day 200 2000 万张  两轴都在守卫内，60 s 无输出、不退出
+  //
+  // 最后一行才是问题：单轴全合法、进程不崩、也不报错——只是「看起来挂住」。
+  // 上限取 100000 张（按实测曲线约 2.6 分钟），与已被接受的
+  // `advice --review-limit 500` 的 136 s（API.md §5.1）同量级；边界值本身仍合法，
+  // 所以比较用 `>`（`cli_hygiene_test.mbt` 的 N-3 用例锁的是 `days=1 × 100000`）。
+  let total_cards_err = total_cards_error(days, new_per_day)
+  if total_cards_err.length() > 0 {
+    println(total_cards_err)
     return 2
   }
   let cfg : @lib.SimConfig = {
