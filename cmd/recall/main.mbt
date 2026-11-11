@@ -484,6 +484,27 @@ fn effective_retention(sched_name : String, requested : Double) -> Double {
 }
 
 ///|
+/// 参数行里「目标保持率」这一格该打印什么（R-3，2026-11-11 审计）。
+///
+/// 修复前非 FSRS 调度器也把**请求值**原样打出来：
+///
+/// ```
+/// 提示: sm2 调度器没有目标保持率参数（算法局限），--retention 0.70 未生效（仅 FSRS 支持）
+/// 参数: 5 天, 每天新增 5 张, 复习上限 200, 目标保持率 0.70, 种子 20240101
+/// ```
+///
+/// 紧邻的两行自相矛盾：前一行说没生效，后一行把它当成生效值列出来。这与
+/// 项目已经修过的 R1「打印值必须等于生效值」是同一类问题 —— 那时修的是
+/// FSRS 越界夹取，非 FSRS 这一支被漏掉了。
+fn retention_field_text(sched_name : String, effective : Double) -> String {
+  if sched_name == "fsrs" {
+    fmt_float(effective, 2)
+  } else {
+    "n/a（该调度器不支持）"
+  }
+}
+
+///|
 /// `--retention` 请求值与生效值不一致时的提示行；一致时返回空串。
 /// 复现 `with_retention` 的夹取逻辑而不是调用它——那条路径在 lib 里，
 /// 这里只负责把同一决策如实告诉用户。
@@ -1099,7 +1120,7 @@ fn cmd_simulate(args : Args) -> Int32 {
     " 张, 复习上限 " +
     (if review_limit == 0 { "不限" } else { review_limit.to_string() }) +
     ", 目标保持率 " +
-    fmt_float(effective_r, 2) +
+    retention_field_text(sched_name, effective_r) +
     ", 种子 " +
     seed.to_string(),
   )
@@ -1483,7 +1504,7 @@ fn cmd_advice(args : Args) -> Int32 {
     ", 积压目标 " +
     target_backlog.to_string() +
     " 张, 目标保持率 " +
-    fmt_float(effective_r, 2) +
+    retention_field_text(sched_name, effective_r) +
     ", 种子 " +
     seed.to_string(),
   )
