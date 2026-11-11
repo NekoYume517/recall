@@ -82,13 +82,13 @@ test "RC-3: 配置字段与显式 with_retention(0.7) 实例给出同一结果" 
 }
 
 ///|
-test "RC-3: 配置字段的 0.7 与旧已知值 1089 吻合（不再是 1164）" {
-  // 审计记录：Fsrs::with_retention(0.7) 在同一配置下 final_backlog = 1089，
-  // 而被忽略的字段路径给出 1164。修复后字段路径必须落到 1089。
+test "RC-3: 配置字段的 0.7 与调度器已知值 1090 吻合（不再是 1165 以外的旧值）" {
+  // 审计记录：Fsrs::with_retention(0.7) 在同一配置下 final_backlog = 1090，
+  // 而被忽略的字段路径给出 1165。修复后字段路径必须落到 1090。`r`n  // （R-1 之后这两个数各 +1：遗忘后的稳定性按 FSRS-5 短期上限封顶，偏低，`r`n  // 于是复习更频繁、积压略大。见 fsrs_lapse_cap_regression_test.mbt。）
   let via_field = simulate(AnyScheduler::Fsrs(Fsrs::new()), rc3_config(0.7))
-  assert_eq(via_field.final_backlog, 1089)
+  assert_eq(via_field.final_backlog, 1090)
   let r90 = simulate(AnyScheduler::Fsrs(Fsrs::new()), rc3_config(0.9))
-  assert_eq(r90.final_backlog, 1164)
+  assert_eq(r90.final_backlog, 1165)
 }
 
 ///|
@@ -122,10 +122,10 @@ test "RC-3: 泛型 simulate_with 不改调度器——语义由 simulate 承担"
   let b = simulate_with(Fsrs::new(), rc3_config(0.7))
   // 同一实例 + 只差配置字段 → 泛型入口给出相同结果（实例说了算）
   assert_eq(a.final_backlog, b.final_backlog)
-  assert_eq(a.final_backlog, 1164)
+  assert_eq(a.final_backlog, 1165)
   // 想让它生效，就把 retention 施加到实例上再传进来
   let c = simulate_with(Fsrs::with_retention(0.7), rc3_config(0.7))
-  assert_eq(c.final_backlog, 1089)
+  assert_eq(c.final_backlog, 1090)
 }
 
 ///|
@@ -133,8 +133,8 @@ test "RC-3: simulate 入口（CLI / advice 走的那条）真正透传配置字�
   let a = simulate(AnyScheduler::Fsrs(Fsrs::new()), rc3_config(0.9))
   let b = simulate(AnyScheduler::Fsrs(Fsrs::new()), rc3_config(0.7))
   assert_true(a.final_backlog != b.final_backlog)
-  assert_eq(a.final_backlog, 1164)
-  assert_eq(b.final_backlog, 1089)
+  assert_eq(a.final_backlog, 1165)
+  assert_eq(b.final_backlog, 1090)
 }
 
 ///|

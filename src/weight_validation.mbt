@@ -289,14 +289,20 @@ pub fn validate_fsrs_reference() -> FsrsWeightCheck {
     })
   }
   // 联立锚点 4：遗忘路径 S'(Again, D=5, S=3, R=0.5)
-  //   = w11 · D^(-w12) · ((S+1)^w13 - 1) · exp(w14·(1-R))
-  //   Python 独立复算 = 2.5648860200305696
+  //   raw = w11 · D^(-w12) · ((S+1)^w13 - 1) · exp(w14·(1-R))      = 2.5648860200305696
+  //   cap = S / exp(w17·w18)                                       = 2.1310280879406296
+  //   S'  = min(raw, cap)                                          = 2.1310280879406296
+  // 官方值取自 py-fsrs 5.1.3 `Scheduler._next_forget_stability`
+  // （short_term_stability = S / exp(w17·w18)，返回 min(long_term, short_term)）。
+  // **修复前这里锁的是 2.5648860200305696 —— 未封顶的长项**，于是这个"与
+  // py-fsrs 交叉验证"的锚点在遗忘路径上给自己背书：实现偏离官方算法，
+  // 锚点也跟着偏离（R-2，2026-11-11 审计）。
   let sl = stability_after_lapse(w, 5.0, 3.0, 0.5)
-  if !near(sl, 2.5648860200305696, 0.000000001) {
+  if !near(sl, 2.1310280879406296, 0.000000001) {
     issues.push({
       index: -1,
       value: sl,
-      why: "S'(Again,D=5,S=3,R=0.5) 独立复算 = 2.5648860200305696，got \{sl}",
+      why: "S'(Again,D=5,S=3,R=0.5) 官方 py-fsrs 5.1.3 = 2.1310280879406296，got \{sl}",
     })
   }
   if issues.length() == 0 {

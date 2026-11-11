@@ -149,15 +149,17 @@ test "advice RC-1: 大目标下真实最大值是 52（probe 级，旧二分给 
 
 ///|
 test "advice RC-1: 单调区间内结果与修复前一致（target=0/limit=30）" {
-  // 常见形态（清零目标、小上限）落在单调区间：f(0..7)=0，f(8)>0。
-  // 修复前二分与修复后扫描都必须是 7 —— 扫描化不应带来行为漂移。
+  // 常见形态（清零目标、小上限）落在单调区间：f(0..8)=0，f(9)>0。
+  // 修复前二分与修复后扫描都必须是 8 —— 扫描化不应带来行为漂移。
   // （原用例用默认 90 天 / 上限 200，要 166 次模拟 ~31s，同理降规模。）
+  // 边界值在 R-1（2026-11-11，FSRS-5 遗忘上限）之后从 7 变成 8：遗忘后的
+  // 稳定性按短期上限封顶后偏低，同一份卡组需要略多的每日新卡才能清零积压。
   let s : AnyScheduler = AnyScheduler::Fsrs(Fsrs::new())
   let req = advice_req_small()
   let r = load_advice(s, req)
-  assert_eq(r.new_per_day, 7)
+  assert_eq(r.new_per_day, 8)
   assert_eq(r.final_backlog, 0)
-  assert_true(probe_final_backlog(s, req, 8) > 0)
+  assert_true(probe_final_backlog(s, req, 9) > 0)
 }
 
 ///|

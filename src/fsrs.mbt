@@ -262,13 +262,36 @@ pub fn stability_after_success(
 /// 遗忘后的稳定性（rating == 1，即 Again）：
 ///
 ///   raw = w[11] · D^(-w[12]) · ((S+1)^w[13] - 1) · exp(w[14] · (1 - R))
-///   S' = max(0.1, min(raw, S))
+///   cap = S · exp(-w[17] · w[18])            ← FSRS-5 的短期上限
+///   S'  = max(0.1, min(raw, cap))
 ///
 /// 逐项含义：
 /// - `w[11]`：遗忘后稳定性基准（≈ 1.94）
 /// - `D^(-w[12])`：难度越高，遗忘后越不稳定（w[12] ≈ 0.11）
 /// - `(S+1)^w[13] - 1`：原稳定性越高，遗忘后仍保留更多（w[13] ≈ 0.296）
 /// - `exp(w[14]·(1-R))`：R 越低（拖得越久才复习）遗忘后反而更稳（w[14] ≈ 2.27）
+///
+/// ## 上限为什么是 `S · exp(-w17·w18)` 而不是 `S`（R-1，2026-11-11 审计）
+///
+/// `min(raw, S)` 是 **FSRS-4.5** 的上限。FSRS-5 把它改成**条件**上限：
+/// 短期调度开（`enable_short_term`）时
+///
+///   S_f = min(raw, S · exp(-w17 · w18))
+///
+/// 关掉短期调度时才是 `min(raw, S)`。官方参考实现（py-fsrs 5.1.3
+/// `Scheduler._next_forget_stability`）两个版本都这么写：
+///
+/// ```python
+/// short_term_stability = stability / math.exp(self.parameters[17] * self.parameters[18])
+/// return min(long_term_stability, short_term_stability)
+/// ```
+///
+/// 而本仓库的 `step` 对 `elapsed_days < 1.0` **是**用 `w[17]`/`w[18]` 做短期
+/// 更新的（`enable_short_term = true`）。于是修复前同一个调度器在一条分支上
+/// 开着短期调度、在另一条分支上按"短期已关闭"取上限：默认权重下
+/// `exp(w17·w18) = 1.4078`，遗忘后的稳定性最多虚高 **40.8%**（D=3、S=22.75、
+/// R=0.05 → 22.75 vs 官方 16.16），在 (D,S,R) 的采样网格上 9.71% 的组合
+/// 有偏差。后果是遗忘后的间隔偏长 —— 一个静默的"记不住却排得更远"。
 ///
 /// 注意：这条公式**不复用**成功路径，是 FSRS 相对 SM-2 的关键改进之一
 /// ——遗忘不是"把间隔清零"，而是按原记忆强度打折。
@@ -308,15 +331,22 @@ pub fn stability_after_lapse(
   let stability_term = @math.pow(s + 1.0, w[13]) - 1.0 // w[13]：原稳定性幂次
   let retrievability_term = @math.exp(w[14] * (1.0 - r)) // w[14]：R 修正
   let next = base * difficulty_term * stability_term * retrievability_term
+  // FSRS-5 的短期上限（R-1）：`s / exp(w17*w18)`，不是裸 `s`。
+  // 用除法而不是 `s * exp(-w17*w18)`：官方参考实现（py-fsrs）就是除法，
+  // 保持逐位一致（两者在浮点上不等价，差 1 ulp 就会让 1e-9 的锚点断言
+  // 变得脆弱）。`exp` 溢出成 +Inf 时 cap 退化成 0（→ 落到 0.1 下限），
+  // 下溢成 0 时 cap 变成 +Inf（→ 不设限）；`s` 上面已保证是有限正数，
+  // 两条极端路径都不会产出 NaN。
+  let short_cap = s / @math.exp(w[17] * w[18])
   if next.is_nan() || next < 0.1 {
     // NaN 一并落到下限：即使 s 合法，极端 w 也可能让中间项产出非有限值
     0.1
-  } else if next > s {
-    // 遗忘不能提高已有稳定性。非法外来 S<0.1 仍遵守数值下限。
-    if s < 0.1 {
+  } else if next > short_cap {
+    // 遗忘不能把稳定性留在短期上限之上。非法外来 S<0.1 仍遵守数值下限。
+    if short_cap < 0.1 {
       0.1
     } else {
-      s
+      short_cap
     }
   } else {
     next
