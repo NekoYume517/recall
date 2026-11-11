@@ -89,6 +89,19 @@ pub fn fsrs_rating(g : Grade) -> Int32 {
 ///   Easy  → w[3] = 15.69105
 ///
 /// 权重为负或过小时夹到 0.1，避免 S=0 导致后续 S^(-w[9]) 发散。
+///
+/// **非有限权重也回落到 0.1 下限**（R-6，2026-11-12 审计）：`with_params`
+/// 明文接受非有限权重（「不校验有限性」），`API.md` §3.2 因此承诺
+/// 「底层初始稳定性仍会夹到 0.1 天」。修复前这里只有 `s < 0.1` 一个判断，
+/// 而 `NaN < 0.1` 为 false、`+Inf` 也不小于 0.1，于是 NaN / Infinity
+/// 被**原样返回**，经 `review`（首次复习必经）写进 `CardState.stability`：
+///
+///     Fsrs::with_params(NaN × 21) -> review(Good) -> stability = NaN
+///
+/// 后果：`retrievability` 恒为 0（判成"彻底忘了"），后续每一次 `step`
+/// 都从 NaN 出发——「稳定性有 0.1 下限」这条不变量到此为止。
+/// 根因与 RC-7（`stability_after_success`）/ N-2（`stability_after_lapse`）
+/// 完全同型，处置也与它们逐字对齐：**非有限一律落到下限**。
 pub fn initial_stability(w : Array[Double], rating : Int32) -> Double {
   let g = if rating < 1 { 1 } else if rating > 4 { 4 } else { rating }
   let idx = g - 1 // ← w 的下标就是评分减一
@@ -96,7 +109,7 @@ pub fn initial_stability(w : Array[Double], rating : Int32) -> Double {
     return 1.0
   }
   let s = w[idx]
-  if s < 0.1 {
+  if !is_finite(s) || s < 0.1 {
     0.1
   } else {
     s
@@ -482,7 +495,12 @@ pub fn step(
   // 参考：fsrs4anki v5.3.0 next_short_term_stability（不含 UI 舍入/fuzz）。
   if elapsed_days < 1.0 {
     let raw = s * @math.exp(w[17] * (rating.to_double() - 3.0 + w[18]))
-    let s_next = if raw < 0.1 { 0.1 } else { raw }
+    // 下限与非有限守卫（R-6，2026-11-12 审计）：与 `stability_after_success`
+    // / `stability_after_lapse` 逐字对齐。修复前只有 `raw < 0.1`，而
+    // `NaN < 0.1` 为 false，于是 w[17]/w[18] 非有限时 NaN 被原样返回，
+    // 直接写进 `CardState.stability`（这是「同日重复评分」的必经路径，
+    // 也是 `is_first` 之外的唯一一线入口）。同族函数必须同族语义。
+    let s_next = if !is_finite(raw) || raw < 0.1 { 0.1 } else { raw }
     return (s_next, d_next, interval_days(s_next, desired_retention))
   }
   // 3. 用旧难度计算长期稳定性，与官方状态转移一致。
