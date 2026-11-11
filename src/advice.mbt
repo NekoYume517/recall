@@ -187,6 +187,24 @@ pub fn load_advice(s : AnyScheduler, req : AdviceRequest) -> AdviceResult {
   let hi_backlog = probe_backlog(s, req, hi)
   if hi_backlog <= req.target_backlog {
     let sim = simulate(s, req.to_config(hi))
+    // `hi` 有两种来源，文案必须如实区分（R-7，2026-11-12 审计）：
+    //   - `req.review_limit > 0`：hi 就是用户的复习上限，说「复习上限」、
+    //     建议「调大 review_limit」都是对的。
+    //   - `req.review_limit == 0`（不限）：hi 是下面那个写死的兜底 500，
+    //     **与容量无关**。旧文案把它称作「（复习上限）」并建议
+    //     「调大 review_limit」——紧邻的参数行刚打印过「复习上限 不限」，
+    //     而 0 已经没有更大的值，这是一条不可能执行的建议
+    //     （与 R1 / R-3「打印值必须等于生效值」同族）。
+    let bound_text = if req.review_limit > 0 {
+      "\{hi} 张新卡（复习上限）"
+    } else {
+      "\{hi} 张新卡（搜索上界：复习不限时本库的固定上限，不是容量上限）"
+    }
+    let tail_text = if req.review_limit > 0 {
+      "可以调大 review_limit 或缩短窗口"
+    } else {
+      "复习上限已是不限（0），只能缩短窗口或降低每日新卡节奏；\{hi} 只是搜索上界，真实容量它没有测到"
+    }
     return {
       new_per_day: hi,
       simulation: sim,
@@ -194,7 +212,7 @@ pub fn load_advice(s : AnyScheduler, req : AdviceRequest) -> AdviceResult {
       next_step_backlog: None,
       search_lo: hi,
       search_hi: hi,
-      summary: "\{req.days} 天窗口内即使每天 \{hi} 张新卡（复习上限），积压也只有 \{hi_backlog}（目标 \{req.target_backlog}）——容量绰绰有余，可以调大 review_limit 或缩短窗口",
+      summary: "\{req.days} 天窗口内即使每天 \{bound_text}，积压也只有 \{hi_backlog}（目标 \{req.target_backlog}）——容量绰绰有余，\{tail_text}",
     }
   }
   // 线性扫描：hi 已确认超标，从 hi-1 往下找第一个达标点。
