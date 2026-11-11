@@ -128,6 +128,33 @@ test "event equal 逐字段" {
   inspect(ReviewEvent::equal(a, c), content="false")
 }
 
+///|
+/// `equal` 必须比较 `grade_raw`（R-4，2026-11-11 审计）。
+///
+/// `grade` 是夹取后的五档，`grade_raw` 是日志里的原始整数 —— 后者才是
+/// 「无损日志」的载体（API.md §2）。修复前 `equal` 漏了这一项，于是
+/// `grade_raw` 只差一点的**两条不同事件**被判为相等，用 `ReviewLog::equal`
+/// 做日志同一性校验的调用方会漏掉这类差异。
+test "event equal compares grade_raw, not just the clamped grade" {
+  let base = ReviewEvent::new_with_raw("c1", 100L, 40L, Grade::Hard, 1L, 1.0)
+  let other = ReviewEvent::new_with_raw("c1", 100L, 40L, Grade::Hard, 2L, 1.0)
+  // 同一档（都是 Hard），但原始整数不同 → 必须不相等
+  assert_eq(base.grade, other.grade)
+  assert_eq(ReviewEvent::equal(base, other), false)
+  let same = ReviewEvent::new_with_raw("c1", 100L, 40L, Grade::Hard, 1L, 1.0)
+  assert_eq(ReviewEvent::equal(base, same), true)
+  // Easy 侧的同一形态（4 vs 5）也要区分
+  let e4 = ReviewEvent::new_with_raw("c1", 100L, 40L, Grade::Easy, 4L, 1.0)
+  let e5 = ReviewEvent::new_with_raw("c1", 100L, 40L, Grade::Easy, 5L, 1.0)
+  assert_eq(ReviewEvent::equal(e4, e5), false)
+  // `ReviewLog::equal` 走的是同一个比较器，因此整条日志也必须区分
+  let la = ReviewLog::new()
+  la.push(base)
+  let lb = ReviewLog::new()
+  lb.push(other)
+  assert_eq(ReviewLog::equal(la, lb), false)
+}
+
 // ─────────────────────────────────────────────────────────────────
 // JSONL 单行格式
 // ─────────────────────────────────────────────────────────────────

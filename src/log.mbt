@@ -135,11 +135,19 @@ pub fn ReviewEvent::overdue_days(self : ReviewEvent) -> Double {
 
 ///|
 /// 事件相等（只 derive(Debug)，手写比较）。
+///
+/// 必须**逐字段**比较，包括 `grade_raw`（R-4，2026-11-11 审计）：`grade` 是
+/// 夹取后的五档，`grade_raw` 是日志里的原始整数、也是「无损日志」这条承诺的
+/// 载体（API.md §2）。修复前这里漏了 `grade_raw`，于是
+/// `grade_raw` 1 与 2（都是 Hard）、4 与 5（都是 Easy）被判为相等 ——
+/// 用 `ReviewLog::equal` 校验日志同一性的调用方会漏掉一整类差异，
+/// 而这正是 RJ-R / RJ-1b 当年修的那类保真缺陷。
 pub fn ReviewEvent::equal(a : ReviewEvent, b : ReviewEvent) -> Bool {
   a.card_id == b.card_id &&
   a.reviewed_at == b.reviewed_at &&
   a.due_at == b.due_at &&
   a.grade == b.grade &&
+  a.grade_raw == b.grade_raw &&
   a.elapsed_days == b.elapsed_days
 }
 
