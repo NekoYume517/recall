@@ -94,10 +94,19 @@ pub fn timestamp_to_iso8601(ts : Timestamp) -> String {
   } else {
     year.to_string()
   }
-  // 年份宽度规则（RC-6，2026-10-27 修正描述）：
-  //   - 不足 4 位 → 补零到 4 位（0001 年写成 "0001"）
-  //   - 恰好 4 位 → 原样
-  //   - 超过 4 位 → **原样输出，不截断**
+  // 年份宽度规则（RC-6 修正描述；R-8 修负年份，2026-11-12 审计）：
+  //   - 不足 4 位**数字** → 补零到 4 位（0001 年写成 "0001"、-27 年写成 "-0027"）
+  //   - 恰好 4 位数字 → 原样
+  //   - 超过 4 位数字 → **原样输出，不截断**
+  //
+  // 补零位数按**数字个数**算，符号不占名额。修复前用的是
+  // `4 - ystr.length()`，而 `ystr` 对负年份带了符号（"-27" 是 3 个字符），
+  // 于是符号被当成一位数字：-27 年输出 "-027"（年份段只有 3 位数字），
+  // 与上面这条自己声明的规则矛盾。可达性：JSONL 时间戳下界是
+  // -62135596800（0001-01-01），CLI 走不到；但本函数是公开 API，
+  // 注释与 API.md §5.2 都承诺覆盖**完整 Int64 域**（已用 Int64.MIN 的
+  // "-292277022657-01-27 08:29:52" 锚定），负年份落在该域内，且
+  // `CardState` 是 pub(all) —— `export_anki_tsv` 的 due 列会把它写进文件。
   //
   // 旧注释写的是「年份补 4 位（Anki 的 CSV 解析器期待 4 位年）」，
   // 但实现从来没做过"4 位"这个约束——超过 4 位时一直走 else 原样输出。
@@ -109,21 +118,19 @@ pub fn timestamp_to_iso8601(ts : Timestamp) -> String {
   // 292277026596 年（RJ-A1 修正：旧注写 1587287 年，是 Int32 回绕的
   // 产物，不是域事实）。截断会把 10099 年写成 "0099"（把未来的到期日
   // 说成公元 99 年），比"多一位数字"更糟。因此保留现状并锁定测试。
-  let y4 = if ystr.length() < 4 {
-    let zeros = 4 - ystr.length()
+  let sign_len = if year < 0L { 1 } else { 0 }
+  let year_digits = ystr.length() - sign_len
+  let y4 = if year_digits < 4 {
+    let zeros = 4 - year_digits
     let sb = StringBuilder()
-    if year < 0L {
+    if sign_len == 1 {
       sb.write_string("-")
-      for i = 0; i < zeros; i = i + 1 {
-        sb.write_char('0')
-      }
-      sb.write_string((-year).to_string())
-    } else {
-      for i = 0; i < zeros; i = i + 1 {
-        sb.write_char('0')
-      }
-      sb.write_string(ystr)
     }
+    for i = 0; i < zeros; i = i + 1 {
+      sb.write_char('0')
+    }
+    // 只取数字部分：不用 `-year`，避免 year 取 Int64 下界时取反不安全
+    sb.write_string(ystr.substring(start=sign_len, end=ystr.length()))
     sb.to_string()
   } else {
     // 4 位与超 4 位都走这里：完整保留，不补也不截
