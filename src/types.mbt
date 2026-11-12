@@ -187,7 +187,10 @@ pub fn add_days(now : Timestamp, days : Double) -> Timestamp {
 ///   FSRS 是标准 D（1..10）；SM-2 借它保存 EF（下限 1.3，无 10 上限，
 ///   实践中 <3，所以「难度 10.50」这类显示值是 EF 而非越界）；Leitner
 ///   借它保存盒号（1..5）。跨调度器比较 difficulty 没有意义。
-/// - `reps`        累计成功复习次数
+/// - `reps`        **语义按调度器分派**：FSRS / Leitner 是累计成功复习次数；
+///   **SM-2 借它存 repetitions —— 连续成功次数，答错（q<3）清零**，不是
+///   累计值（API.md §3.1 的 SM-2 契约）。`replay` 表格直接打印该列，
+///   跨算法比较没有意义。
 /// - `lapses`      遗忘（答错）次数
 /// - `last_review` 上次复习时刻
 /// - `due`         下次到期时刻
@@ -198,7 +201,7 @@ pub(all) struct CardState {
   card_id : String
   stability : Double // S：保持天数
   difficulty : Double // 语义按调度器分派：FSRS=D(1..10) / SM-2=EF / Leitner=盒号
-  reps : Int32 // 成功复习次数
+  reps : Int32 // SM-2 = 连续成功次数（答错清零）；FSRS / Leitner = 累计成功次数
   lapses : Int32 // 遗忘次数
   last_review : Timestamp
   due : Timestamp
