@@ -429,6 +429,7 @@ fn usage_text() -> String {
     "  --days           模拟天数 (默认 90, 上限 100000)", "  --new-per-day    每天新增卡片数 (默认 20)",
     "  --days × --new-per-day 的乘积上限 100000 张（每次模拟逐日逐卡推进）",
     "  --review-limit   每天复习上限, 0 表示不限 (默认 200)", "  --policy         评分策略: optimistic | realistic | pessimistic (默认 realistic)",
+    "  advice 的成本守卫: 探测上界 × --days² × --review-limit <= 2500000000，超界 exit 2",
     "  --buckets        保持率曲线分桶数 (默认 10, 上限 10000)", "  --retention      目标保持率 (默认 0.9, fsrs 有效区间 [0.5,0.99], 越界夹到边界)",
     "  --target-backlog advice 的积压目标, 张 (默认 0 = 清零)", "  --seed           模拟的伪随机种子 (默认 20240101, 64 位整数)",
     "  --json           以 JSON 输出 (仅 replay, 与 --anki 同给时被忽略)",
@@ -556,6 +557,136 @@ fn total_cards_error(days : Int32, new_per_day : Int32) -> String {
     return "用法错误: --days × --new-per-day 必须 <= 100000 张（每次模拟逐日逐卡推进，实测 10 万张约 159 s），得到 \{days} × \{new_per_day} = \{cards}"
   }
   ""
+}
+
+///|
+/// 不超过 `x` 的最大整数平方根（`x >= 0`），纯整数二分。
+///
+/// 反算建议值要用到开方；用浮点 `sqrt` 会在边界上给出「再走一步就超界」的
+/// 建议值（`sqrt(2.5e9)` 这类恰好落在整数边上的值尤其容易），而建议值必须
+/// 代回去 **确实** 通过守卫。
+fn int64_sqrt_floor(x : Int64) -> Int64 {
+  if x <= 0L {
+    return 0L
+  }
+  let mut lo = 0L
+  let mut hi = x
+  while lo < hi {
+    let mid = lo + (hi - lo + 1L) / 2L
+    // 用除法比较，避免 mid*mid 溢出。
+    if mid <= x / mid {
+      lo = mid
+    } else {
+      hi = mid - 1L
+    }
+  }
+  lo
+}
+
+///|
+/// `advice` 的成本是否超界（纯判定，供 `advice_cost_error` 与反算建议共用）。
+fn advice_cost_over(days : Int32, review_limit : Int32) -> Bool {
+  let limit : Int64 = 2500000000L
+  let hi = if review_limit > 0 { review_limit } else { 500 }
+  let hi64 = hi.to_int64()
+  let d = days.to_int64()
+  // `days` / `hi` 已被单轴守卫限到 <= 100000，`per_probe <= 1e15`，不会溢出。
+  let per_probe = d * d * hi64
+  per_probe > limit / (hi64 + 2L)
+}
+
+///|
+/// 超界时给出**按当前另一轴反算的可行值**（R-7 同族：报错必须给能执行的下一步）。
+///
+/// 两侧都反算完必须**代回判定**（`advice_cost_over`）确认通过才写进建议——
+/// 「建议一个也会被拒的值」是这条修复最容易犯的错，回归用例把这条钉住了。
+///
+/// - 固定 `--review-limit`，`--days` 的上界：`floor(sqrt(limit / ((hi+2)·hi)))`；
+/// - 固定 `--days`，`--review-limit` 的上界：解 `h² + 2h <= limit / days²`，
+///   即 `floor(sqrt(q+1)) - 1`（`q = limit / days²`）；
+/// - `--review-limit 0`（不限）不反算 `review-limit`：把它改成具体值就改掉了
+///   「不限」语义，此时如实说只能减 `--days`。
+fn advice_cost_hint(days : Int32, review_limit : Int32) -> String {
+  let limit : Int64 = 2500000000L
+  let hi = if review_limit > 0 { review_limit } else { 500 }
+  let hi64 = hi.to_int64()
+  let d = days.to_int64()
+  let days_max = int64_sqrt_floor(limit / ((hi64 + 2L) * hi64))
+  let q = limit / (d * d)
+  let review_max = int64_sqrt_floor(q + 1L) - 1L
+  let parts : Array[String] = []
+  if days_max >= 1L && !advice_cost_over(days_max.to_int(), review_limit) {
+    let keep = if review_limit == 0 {
+      "保持 --review-limit 0（不限）时"
+    } else {
+      "保持 --review-limit \{review_limit} 时"
+    }
+    parts.push(keep + "把 --days 降到 \{days_max} 以内")
+  }
+  if review_limit > 0 &&
+    review_max >= 1L &&
+    !advice_cost_over(days, review_max.to_int()) {
+    parts.push(
+      "保持 --days \{days} 时把 --review-limit 降到 \{review_max} 以内",
+    )
+  }
+  let body = if parts.length() == 0 {
+    "--days 与 --review-limit 都需调小（任一轴单独下调都已超界）"
+  } else {
+    parts.join("；或")
+  }
+  let zero_note = if review_limit == 0 {
+    "（0 表示不限，搜索上界固定为 500；要保留「不限」语义只能减 --days）"
+  } else {
+    ""
+  }
+  "\n  建议: " + body + zero_note
+}
+
+///|
+/// `advice` 的**成本**守卫：探测次数 × 单次模拟成本。
+///
+/// `load_advice` 从 `hi = review_limit`（0 = 不限时取固定 500）向下逐张探测
+/// 直到达标，最坏 `hi + 2` 次探测（`f(0)`、`f(hi)`、`hi-1` … `f(1)`），每次
+/// 都是一整段 `O(days² × n)` 的完整模拟。所以成本的主项是
+///
+///     probes(hi + 2) × days² × hi
+///
+/// 三个单轴守卫一个也拦不住它：`--days 5000 --review-limit 200` 两轴都在上限
+/// 内，真值 `202 × 5000² × 200 = 1.01e12`，实测 90 s 零字节输出、不退出
+/// （与 `simulate` 的 `total_cards_error` 同族：不崩、不报错，只是看起来挂住）。
+///
+/// 上限 `2.5e9` 的依据（本机实测 + API.md §5.1 已被接受的成本口径）：
+///   - 默认档 `--days 90 --review-limit 200` = `202 × 8100 × 200 = 3.27e8`
+///     → 实测 **31.8 s**；
+///   - `--days 90 --review-limit 500` = `2.03e9` → **136 s**，API.md §5.1 明文
+///     把「秒级到两分钟的等待」定为可接受代价，所以这条基线必须放行；
+///   - 阈值 `2.5e9` 比该基线高 23%（按「探测次数取上界」的保守模型约 240 s，
+///     实际通常 150 s 上下），而 `--days 5000 --review-limit 200` 的 `1.01e12`
+///     高 400 倍，被干净拦住。
+///
+/// 边界值本身合法（`> 2.5e9` 才拒）；`--review-limit 0` 与 `--review-limit 500`
+/// 同形（`hi` 都是 500），0 的「不限」语义不变（R-7 的文案锁定不受影响）。
+/// 乘积用 `Int64`：`100000²` 在 `Int32` 里就绕了；报错路径上再做饱和，
+/// 因为 `1e5² × 1e5 × 1e5` 会超出 `Int64`。合法返回空串，非法返回错误消息
+/// （消息末尾附反算出的可行值，见 `advice_cost_hint`）。
+fn advice_cost_error(days : Int32, review_limit : Int32) -> String {
+  let limit : Int64 = 2500000000L
+  let hi = if review_limit > 0 { review_limit } else { 500 }
+  let hi64 = hi.to_int64()
+  let d = days.to_int64()
+  // `days` / `hi` 已被单轴守卫限到 <= 100000，`per_probe <= 1e15`，不会溢出。
+  let per_probe = d * d * hi64
+  let probes = hi64 + 2L
+  // 用除法比较，避免 `per_probe × probes` 在判定前溢出。
+  if per_probe <= limit / probes {
+    return ""
+  }
+  let max : Int64 = 9223372036854775807L
+  let cost = if per_probe > max / probes { max } else { per_probe * probes }
+  let suffix = if cost == max { "（已到 Int64 饱和值）" } else { "" }
+  "用法错误: advice 的总成本（探测次数 × 单次模拟 = 探测上界 × --days² × --review-limit）必须 <= 2500000000，得到 \{probes} × \{days}² × \{hi} = \{cost}\{suffix}（--days \{days}，--review-limit \{review_limit}）" +
+  advice_cost_hint(days, review_limit)
 }
 
 ///|
@@ -1482,8 +1613,10 @@ fn cmd_advice(args : Args) -> Int32 {
     println("用法错误: --days 必须为正")
     return 2
   }
-  // advice 每次 probe 是一次完整模拟（上限 100 次扫描），量级守卫
-  // 与 simulate 同阈值——advice 的成本还要再乘扫描次数。
+  // advice 每次 probe 都是一整段完整模拟，而 `load_advice` 最多探测
+  // `hi + 2` 次（hi = review_limit，0 时取固定 500）——**不是**「上限 100 次」，
+  // 旧注释写错了量级。单轴守卫与 simulate 同阈值，乘积另由下面的
+  // `advice_cost_error` 管。
   if days > 100000 {
     println(
       "用法错误: --days 必须 <= 100000（advice 每次探测都是完整模拟），得到 \{days}",
@@ -1505,6 +1638,15 @@ fn cmd_advice(args : Args) -> Int32 {
   }
   if target_backlog < 0 {
     println("用法错误: --target-backlog 必须非负")
+    return 2
+  }
+  // **成本守卫**（2026-11-12 遗留项 A1）。上面两条单轴守卫管不住乘积：
+  // `--days 5000 --review-limit 200` 两轴都合法，实测 90 s 零字节输出、不退出。
+  // advice 的成本形状与 simulate 不同（探测次数 × 单次模拟），所以另设阈值，
+  // 依据见 `advice_cost_error` 的注释。放在单轴守卫之后，保证乘积不溢出。
+  let advice_cost_err = advice_cost_error(days, review_limit)
+  if advice_cost_err.length() > 0 {
+    println(advice_cost_err)
     return 2
   }
   let s = @lib.AnyScheduler::by_name_with_retention(
