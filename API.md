@@ -178,8 +178,16 @@ q >= 3（答对）:
 
 EF 更新（每次复习都做，用更新前的 EF 算间隔）:
     EF = EF + (0.1 - (5-q) * (0.08 + (5-q) * 0.02))
-    EF = max(1.3, EF)
+    EF = max(1.3, EF)        // 非有限（NaN / ±Inf）也按 1.3 继续
 ```
+
+**EF 的三处守卫是同一套规则**（`sm2_ease_or_floor`，2026-11-13 审计 D2）：
+`with_ease` 的构造夹取、`init` 写进 `CardState.difficulty` 的初值、`review`
+读外部状态的防守。修复前三处都写成比较式（`x < 1.3`），而 `NaN < 1.3` 为
+false —— NaN 从守卫中间穿过去，`round(prev_interval × NaN)` 落到 1 天下限，
+**这张卡从此每天到期一次**（实测 `difficulty=NaN` 时 `iv1=1 iv3=1`，
+按 1.3 继续则是 `1 / 6 / 8`）。`CardState` 是 `pub(all)`，库级可达；
+可达性论证与 R-6（FSRS 非有限权重）同型。
 
 **注意两个容易搞错的点：**
 1. `Grade::to_int` 的返回值（Again=0/Hard=2/Good=3/Easy=5）**不是** SM-2 的 `q`。`q` 必须用上面这张表单独映射。

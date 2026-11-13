@@ -44,10 +44,31 @@ pub fn Sm2::new() -> Sm2 {
 }
 
 ///|
+/// EF 的**唯一**下限守卫（D2，2026-11-13 审计）。
+///
+/// SM-2 的「EF 不低于 1.3」在这份代码里出现四处：`with_ease` 的构造夹取、
+/// `init` 写进 `CardState.difficulty` 的初值、`review` 读外部状态的防守、
+/// `sm2_next_ease` 收尾的夹取。四处都写成比较式（`x < 1.3`），
+/// 而 `NaN < 1.3` 为 **false** —— NaN 从四条守卫中间穿过去，
+/// 于是 EF 一旦是 NaN 就永远是 NaN：`sm2_next_interval` 第 3 次起
+/// 算 `round(prev_interval × NaN)` = NaN → 落到 1 天下限，**这张卡从此每天到期**。
+///
+/// 与 R-6 / RC-7 / N-2 同族：比较式守卫必须显式处理 NaN。
+/// 非有限（NaN / ±Inf）一律按**下限**继续——尊重「这张卡的 EF 已经很糟」
+/// 这个事实，而不是回退默认 2.5 让难卡凭空舒展（`review` 里原有的
+/// 「外来状态防御」注释就是这条理由）。
+fn sm2_ease_or_floor(ease : Double) -> Double {
+  if !is_finite(ease) || ease < sm2_min_ease() {
+    sm2_min_ease()
+  } else {
+    ease
+  }
+}
+
+///|
 /// 指定 EF 初值的 SM-2（低于 1.3 会被夹到 1.3）。
 pub fn Sm2::with_ease(ease : Double) -> Sm2 {
-  let ef = if ease < sm2_min_ease() { sm2_min_ease() } else { ease }
-  { ease_factor: ef, interval_days: 0.0, repetitions: 0, }
+  { ease_factor: sm2_ease_or_floor(ease), interval_days: 0.0, repetitions: 0, }
 }
 
 ///|
@@ -82,13 +103,12 @@ pub fn sm2_ease_delta(q : Int32) -> Double {
 
 ///|
 /// 按 SM-2 规则更新 EF（带 1.3 下限）。纯函数，方便单测。
+///
+/// 收尾走 `sm2_ease_or_floor`：非有限（NaN / ±Inf）也落到下限，
+/// 不再让 `NaN < 1.3` 为 false 把 NaN 原样传下去（D2，2026-11-13 审计）。
 pub fn sm2_next_ease(ease : Double, grade : Grade) -> Double {
   let next = ease + sm2_ease_delta(sm2_quality(grade))
-  if next < sm2_min_ease() {
-    sm2_min_ease()
-  } else {
-    next
-  }
+  sm2_ease_or_floor(next)
 }
 
 ///|
@@ -150,7 +170,7 @@ pub impl Scheduler for Sm2 with fn init(self, card_id, now) {
   {
     card_id,
     stability: 0.0,
-    difficulty: self.ease_factor, // SM-2 借用 difficulty 保存 EF
+    difficulty: sm2_ease_or_floor(self.ease_factor), // SM-2 借用 difficulty 保存 EF
     reps: 0,
     lapses: 0,
     last_review: now,
@@ -174,11 +194,7 @@ pub impl Scheduler for Sm2 with fn review(self, state, grade, now) {
   // 卡 EF 很低"的事实按 1.3 继续，而不是回退 self.ease_factor（默认
   // 实例是 2.5），那会让难卡凭空舒展、间隔虚假膨胀。
   // 正常路径不受影响：调度器自己产出的状态 difficulty 恒 >= 1.3。
-  let prev_ease = if state.difficulty < sm2_min_ease() {
-    sm2_min_ease()
-  } else {
-    state.difficulty
-  }
+  let prev_ease = sm2_ease_or_floor(state.difficulty)
   let correct = sm2_is_correct(grade)
   // 1) 先用「上一次的 EF」和「上一次的 repetitions」算间隔
   let interval = sm2_next_interval(
