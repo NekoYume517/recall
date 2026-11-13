@@ -263,8 +263,13 @@ pub fn stability_after_success(
     retrievability_term
   let multiplier = 1.0 + gain * hard_factor * easy_factor
   let next = s * multiplier
-  if next.is_nan() || next < 0.1 {
-    // NaN 一并落到下限：即使 s 合法，极端 w 也可能让中间项产出非有限值
+  if !is_finite(next) || next < 0.1 {
+    // **非有限**（不只 NaN）一并落到下限（D3，2026-11-13 审计）：即使 `s` 合法，
+    // 极端但**有限**的权重也会让中间项产出 +Inf（`w[8]=1e308` ⇒ `exp(w8)=+Inf`
+    // ⇒ `next=+Inf`；`w[16]=1e308` 的 Easy 路径同理）。`+Inf` 既不 `is_nan`
+    // 也不 `< 0.1`，修复前会原样成为 `CardState.stability`：`retrievability`
+    // 恒 1、间隔恒 36500、Anki 导出写 `Infinity`。与 `step` 短期分支的
+    // `!is_finite(raw)`（R-6）以及下面遗忘路径的同一条判断对齐。
     0.1
   } else {
     next
@@ -351,8 +356,12 @@ pub fn stability_after_lapse(
   // 下溢成 0 时 cap 变成 +Inf（→ 不设限）；`s` 上面已保证是有限正数，
   // 两条极端路径都不会产出 NaN。
   let short_cap = s / @math.exp(w[17] * w[18])
-  if next.is_nan() || next < 0.1 {
-    // NaN 一并落到下限：即使 s 合法，极端 w 也可能让中间项产出非有限值
+  if !is_finite(next) || next < 0.1 {
+    // **非有限**（不只 NaN）一并落到下限（D3，2026-11-13 审计）：与成功路径
+    // 的同一条判断逐字对齐。`+Inf` 有两条来路：长项被极端有限权重推成
+    // `+Inf`（`w[11]`/`w[14]`），或短期上限自己失效（`w17·w18 = -Inf`
+    // ⇒ `exp` 下溢到 0 ⇒ `short_cap = s/0 = +Inf`），此时 `next > short_cap`
+    // 挡不住 Infinity。
     0.1
   } else if next > short_cap {
     // 遗忘不能把稳定性留在短期上限之上。非法外来 S<0.1 仍遵守数值下限。
