@@ -22,11 +22,14 @@ moon version
 
 ```bash
 moon check
-moon test      # 482 个测试
+moon test      # 523 个测试
 moon build --target wasm
 ```
 
-预期：`Total tests: 482, passed: 482, failed: 0.`
+预期：`Total tests: 523, passed: 523, failed: 0.`
+
+> 这一行是**硬编码的期望值**：每加一条测试都要跟着改（2026-11-13 审计时它还停在
+> 482，比当时的 510 少 28 条——照着 DEMO 逐字比对会误判成回归）。
 
 ## 二、核心产出：积压预测
 
