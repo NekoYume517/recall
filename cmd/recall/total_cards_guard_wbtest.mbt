@@ -12,6 +12,10 @@
 test "total cards guard: the documented boundary is still allowed" {
   // N-3 用的就是 days=1 × new_per_day=100000，乘积正好 100000，必须放行。
   inspect(total_cards_error(1, 100000), content="")
+  // ⚠️ 2026-11-13 审计 D1：下面这行只说明**卡数**这一条守卫放行它，
+  // 端到端已经不可用——`simulate_scan_error(100000, 1)` 会因扫描量超界
+  // （5.0e9 > 2.5e8）exit 2；修前实测 300 s 零字节输出、进程不退出。
+  // 见 `simulate_scan_guard_wbtest.mbt` 与 API.md §5.1 的两道守卫表。
   inspect(total_cards_error(100000, 1), content="")
   inspect(total_cards_error(90, 20), content="")
   inspect(total_cards_error(0, 20), content="")

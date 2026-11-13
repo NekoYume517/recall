@@ -428,6 +428,7 @@ fn usage_text() -> String {
     "  --scheduler      调度器: sm2 | fsrs | leitner", "  --a / --b        compare 的左右两侧调度器",
     "  --days           模拟天数 (默认 90, 上限 100000)", "  --new-per-day    每天新增卡片数 (默认 20)",
     "  --days × --new-per-day 的乘积上限 100000 张（每次模拟逐日逐卡推进）",
+    "  --new-per-day × --days² ÷ 2 的扫描量上限 250000000（模拟器每天两趟全表扫描），超界 exit 2",
     "  --review-limit   每天复习上限, 0 表示不限 (默认 200)", "  --policy         评分策略: optimistic | realistic | pessimistic (默认 realistic)",
     "  advice 的成本守卫: 探测上界 × --days² × --review-limit <= 2500000000，超界 exit 2",
     "  --buckets        保持率曲线分桶数 (默认 10, 上限 10000)", "  --retention      目标保持率 (默认 0.9, fsrs 有效区间 [0.5,0.99], 越界夹到边界)",
@@ -687,6 +688,95 @@ fn advice_cost_error(days : Int32, review_limit : Int32) -> String {
   let suffix = if cost == max { "（已到 Int64 饱和值）" } else { "" }
   "用法错误: advice 的总成本（探测次数 × 单次模拟 = 探测上界 × --days² × --review-limit）必须 <= 2500000000，得到 \{probes} × \{days}² × \{hi} = \{cost}\{suffix}（--days \{days}，--review-limit \{review_limit}）" +
   advice_cost_hint(days, review_limit)
+}
+
+///|
+/// `simulate` 的**扫描量**上限（工作单元，见 `simulate_scan_units`）。
+///
+/// 取值依据（本机实测，`--review-limit 200`、native 构建，见
+/// `audit/2026-11-13/recall/probe/simulate-cost*.log`）：
+///
+/// | 配置 | 卡数 | 扫描量 | 实测耗时 |
+/// |---|---|---|---|
+/// | `--days 90 --new-per-day 20` | 1 800 | 8.0e4 | 0.4 s |
+/// | `--days 2000 --new-per-day 20` | 4 万 | 4.0e7 | 10.5 s |
+/// | `--days 20000 --new-per-day 1` | 2 万 | 2.0e8 | 6.4 s |
+/// | `--days 5000 --new-per-day 20` | 10 万 | 2.5e8 | 221 s |
+/// | `--days 100000 --new-per-day 1` | 10 万 | 5.0e9 | **300 s 零输出、不退出** |
+///
+/// 边界取 `2.5e8`：正好是被接受过的「10 万张」那档（旧守卫的注释写着
+/// 「实测 10 万张约 159 s」，与上表 221 s 同量级），比较用 `>`（边界值合法）。
+fn simulate_scan_limit() -> Int64 {
+  250000000L
+}
+
+///|
+/// 一次 `simulate` 的**扫描量**（工作单元）。
+///
+/// `simulate_with` 每天做两趟全表扫描（找 due、统计 backlog），于是
+///
+///     Σ_{d<days} states(d) ≈ new_per_day · days² / 2
+///
+/// 与卡数 `days × new_per_day` 是两个形状：卡数相同的配置，扫描量可以差
+/// 上万倍（`--days 1 --new-per-day 100000` 是 0，`--days 100000
+/// --new-per-day 1` 是 5.0e9）。旧守卫只卡了卡数，所以后者合法却挂住。
+///
+/// 全程 `Int64`：`days² × new_per_day` 在 `Int32` 里第二个轴就绕了
+/// （`100000 × 100000` 溢出成负数，守卫反而放行）。`days <= 100000`
+/// 与 `new_per_day <= 100000` 已由单轴守卫保证，最大值 5e14 不溢出。
+fn simulate_scan_units(days : Int32, new_per_day : Int32) -> Int64 {
+  if days <= 0 || new_per_day <= 0 {
+    return 0L
+  }
+  let d = days.to_int64()
+  let n = new_per_day.to_int64()
+  n * d * (d - 1L) / 2L
+}
+
+///|
+/// 固定 `--new-per-day` 时 `--days` 的可行上界（`n == 0` 返回 0 = 无上界）。
+///
+/// 解 `n·d·(d-1)/2 <= limit`，即 `d(d-1) <= q = 2·limit/n`：
+/// `d = floor((1 + floor(sqrt(1+4q))) / 2)`，再**代回判定**收紧/放宽
+/// （R-7 同族：建议一个也会被拒的值是这个仓库最容易犯的错）。
+/// 用纯整数开方 `int64_sqrt_floor`，不用浮点 `sqrt`——后者在整数边界上
+/// 会给出「再走一步就超界」的建议值。
+fn suggested_days_upper_bound(new_per_day : Int32) -> Int64 {
+  if new_per_day <= 0 {
+    return 0L
+  }
+  let limit = simulate_scan_limit()
+  let n = new_per_day.to_int64()
+  let q = 2L * limit / n
+  let s = int64_sqrt_floor(1L + 4L * q)
+  let mut d = (1L + s) / 2L
+  while d > 0L && simulate_scan_units(d.to_int(), new_per_day) > limit {
+    d = d - 1L
+  }
+  while simulate_scan_units((d + 1L).to_int(), new_per_day) <= limit {
+    d = d + 1L
+  }
+  d
+}
+
+///|
+/// `simulate` 的**扫描量守卫**（2026-11-13 审计 D1：旧守卫漏了 `--days` 的
+/// 平方贡献）。合法返回空串，非法返回带反算建议的错误消息。
+fn simulate_scan_error(days : Int32, new_per_day : Int32) -> String {
+  let limit = simulate_scan_limit()
+  let units = simulate_scan_units(days, new_per_day)
+  if units <= limit {
+    return ""
+  }
+  let msg = "用法错误: simulate 的扫描量（--new-per-day × --days² ÷ 2，模拟器每天两趟全表扫描）必须 <= \{limit}，得到 \{new_per_day} × \{days}² ÷ 2 = \{units}（--days \{days}，--new-per-day \{new_per_day}）"
+  let bound = suggested_days_upper_bound(new_per_day)
+  if bound < 1L {
+    msg +
+    "\n  建议: --new-per-day \{new_per_day} 时无论 --days 取多少都超界，请先调小 --new-per-day"
+  } else {
+    msg +
+    "\n  建议: 保持 --new-per-day \{new_per_day} 时把 --days 降到 \{bound} 以内（扫描量与 --days 的平方成正比，调 --days 才是最有效的一侧）"
+  }
 }
 
 ///|
@@ -1247,6 +1337,16 @@ fn cmd_simulate(args : Args) -> Int32 {
   let total_cards_err = total_cards_error(days, new_per_day)
   if total_cards_err.length() > 0 {
     println(total_cards_err)
+    return 2
+  }
+  // **扫描量守卫**（2026-11-13 审计 D1）。上面那条管的是卡数（内存），
+  // 而模拟器每天两趟全表扫描，扫描量是 `new_per_day × days² / 2`：
+  // `--days 100000 --new-per-day 1` 卡数正好 10 万（旧守卫放行），实测
+  // 300 s 零字节输出、进程不退出——与 A1（advice 的 days² 成本）同族，
+  // 只是这侧当时只按 days 修了一半。
+  let scan_err = simulate_scan_error(days, new_per_day)
+  if scan_err.length() > 0 {
+    println(scan_err)
     return 2
   }
   let cfg : @lib.SimConfig = {
