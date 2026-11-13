@@ -272,7 +272,34 @@ fn day_start(day : Int32) -> Timestamp {
 }
 
 ///|
-/// 用任意调度器跑一次模拟。
+/// 运行时中止信息（2026-11-13 追加轮：运行时工作预算）。
+///
+/// `work` 是**中止时**已累计的到期条数（`Σ due_cards`，超过 `limit` 的第一天），
+/// `backlog` / `due_cards` 是那一天的真实状态。
+#derive(Debug)
+pub(all) struct SimAbort {
+  /// 中止发生的那一天（0 基）
+  day : Int32
+  /// 当天结束时的积压（到期但没排上）
+  backlog : Int32
+  /// 当天的到期条数（= 当天要排序/处理的队列长度）
+  due_cards : Int32
+  /// 中止时已累计的到期条数
+  work : Int64
+  /// 预算
+  limit : Int64
+}
+
+///|
+/// `simulate_with_budget` 的结果：跑完，或撞上预算被中止。
+#derive(Debug)
+pub(all) enum SimOutcome {
+  Completed(SimResult)
+  Aborted(SimAbort)
+}
+
+///|
+/// 用任意调度器跑一次模拟（**不限**运行时工作量）。
 ///
 /// 每天的流程：
 ///   1. **新卡入场**：造 `new_per_day` 张新卡，`due = now`（当天就学）
@@ -286,7 +313,47 @@ fn day_start(day : Int32) -> Timestamp {
 /// 注意复习上限的含义：**新卡也占用配额**（与 Anki 一致）。
 /// 因此当 backlog 很大时，用户实际上连新卡都学不了——
 /// 这正是"积压拖垮学习节奏"的真实机制。
+///
+/// 需要「撞到运行时长就中止」时用 `simulate_with_budget`。
 pub fn[T : Scheduler] simulate_with(s : T, config : SimConfig) -> SimResult {
+  match simulate_with_budget(s, config, 9223372036854775807L) {
+    Completed(r) => r
+    // 预算取 Int64.MAX 时不可达（累计量最大 ~5e14）。防御性分支：
+    // 返回一份空结果而不是抛错，保持 `simulate_with` 是全函数。
+    Aborted(_) =>
+      { days: [], total_reviews: 0, max_backlog: 0, final_backlog: 0, }
+  }
+}
+
+///|
+/// 带**运行时工作预算**的模拟（2026-11-13 追加轮）。
+///
+/// ## 为什么需要运行时判据
+///
+/// 前三道 CLI 守卫（单轴 / 卡数乘积 / 扫描量）都是「启动时按三个参数算一个数」，
+/// 它们算不出**积压**——积压是运行时涌现的。实测（native release，只改
+/// `--review-limit`，其余 `--days 2000 --new-per-day 20`）：
+///
+///     rl=20 → 9.2 s（最终积压 39844）  rl=200 → 3.1 s（22451）
+///     rl=50 → 7.0 s（39275）           rl=500 → 0.3 s（0）
+///                                      rl=2000 → 0.3 s（0）
+///
+/// 五组的扫描量 `new_per_day × days² / 2` 完全相同（4e7），耗时差 30 倍；
+/// 主导项是「积压能不能被 `--review-limit` 消化」，而这在启动时不可计算。
+///
+/// ## 判据
+///
+/// 每天累计「当天到期条数」`Σ due_cards`（= 当天要排序/处理的队列长度）。
+/// 该量与实测耗时近似线性（release 约 1e6–5e6 条/秒，`moon run` debug 约 8e5），
+/// 而**判定点只由参数与种子决定**：同一配置两次运行在同一天、同一积压处中止，
+/// 与机器快慢、墙钟无关。
+///
+/// `work_limit <= 0` 按字面执行（第 0 天就中止），不做「不限」的特殊处理。
+pub fn[T : Scheduler] simulate_with_budget(
+  s : T,
+  config : SimConfig,
+  work_limit : Int64,
+) -> SimOutcome {
   let out : Array[SimDay] = []
   // 所有卡的状态。用 Array 顺序存，索引稳定，便于原地更新。
   let states : Array[CardState] = []
@@ -294,6 +361,7 @@ pub fn[T : Scheduler] simulate_with(s : T, config : SimConfig) -> SimResult {
   let mut max_backlog = 0
   let mut next_card_no = 0
   let mut day = 0
+  let mut work : Int64 = 0L
   while day < config.days {
     let now = day_start(day)
     // --- 1. 新卡入场 ---
@@ -392,6 +460,18 @@ pub fn[T : Scheduler] simulate_with(s : T, config : SimConfig) -> SimResult {
     if backlog > max_backlog {
       max_backlog = backlog
     }
+    // --- 7. 运行时工作预算 ---
+    //
+    // 累计量 = 当天的到期条数（当天要排序/处理的队列长度）。它与实测耗时
+    // 近似线性，而且**判定点与墙钟无关**：同一配置两次运行必在同一天、
+    // 同一积压处中止（`SimAbort` 逐字段可复现）。
+    //
+    // 放在「统计积压」之后：中止信息里要给出那一天的**真实积压**，
+    // 它比 `due_cards` 更能说明「rl 消化不了」这件事。
+    work = work + due_cards.to_int64()
+    if work > work_limit {
+      return Aborted({ day, backlog, due_cards, work, limit: work_limit, })
+    }
     out.push({
       day,
       new_cards: new_today,
@@ -407,7 +487,7 @@ pub fn[T : Scheduler] simulate_with(s : T, config : SimConfig) -> SimResult {
   } else {
     out[out.length() - 1].backlog
   }
-  { days: out, total_reviews, max_backlog, final_backlog, }
+  Completed({ days: out, total_reviews, max_backlog, final_backlog, })
 }
 
 ///|

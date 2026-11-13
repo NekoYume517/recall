@@ -431,6 +431,7 @@ fn usage_text() -> String {
     "  --new-per-day × --days² ÷ 2 的扫描量上限 250000000（模拟器每天两趟全表扫描），超界 exit 2",
     "  --review-limit   每天复习上限, 0 表示不限 (默认 200)", "  --policy         评分策略: optimistic | realistic | pessimistic (默认 realistic)",
     "  advice 的成本守卫: 探测上界 × --days² × --review-limit <= 2500000000，超界 exit 2",
+    "  simulate 的运行时工作预算: 累计到期条数 <= 60000000，超出即中止 exit 2（大 --days × 小 --review-limit）",
     "  --buckets        保持率曲线分桶数 (默认 10, 上限 10000)", "  --retention      目标保持率 (默认 0.9, fsrs 有效区间 [0.5,0.99], 越界夹到边界)",
     "  --target-backlog advice 的积压目标, 张 (默认 0 = 清零)", "  --seed           模拟的伪随机种子 (默认 20240101, 64 位整数)",
     "  --json           以 JSON 输出 (仅 replay, 与 --anki 同给时被忽略)",
@@ -776,6 +777,68 @@ fn simulate_scan_error(days : Int32, new_per_day : Int32) -> String {
   } else {
     msg +
     "\n  建议: 保持 --new-per-day \{new_per_day} 时把 --days 降到 \{bound} 以内（扫描量与 --days 的平方成正比，调 --days 才是最有效的一侧）"
+  }
+}
+
+///|
+/// `simulate` 的**运行时工作预算**（2026-11-13 追加轮）。
+///
+/// 前三道守卫（单轴 / 卡数乘积 / 扫描量）都是「启动时按三个参数算一个数」，
+/// 它们算不出**积压**——积压是运行时涌现的，由调度器给的间隔分布与三个参数
+/// 交互决定。实测（native release，`--days 2000 --new-per-day 20`，只改
+/// `--review-limit`；`probe/LEAD-COST-SURFACE.log`、`probe/grid-release.log`）：
+///
+/// | review_limit | 扫描量 | 耗时 | 最终积压 |
+/// |---|---|---|---|
+/// | 20 | 4.0e7 | 9.2 s | 39 844 |
+/// | 50 | 4.0e7 | 7.0 s | 39 275 |
+/// | 200 | 4.0e7 | 3.1 s | 22 451 |
+/// | 500 | 4.0e7 | 0.3 s | 0 |
+/// | 2000 | 4.0e7 | 0.3 s | 0 |
+///
+/// 扫描量完全相同、耗时差 30 倍 ⇒ 「`days × review_limit`」和「扫描量」都不是
+/// 主导项，**积压能不能被 `--review-limit` 消化**才是。而积压在启动时不可计算，
+/// 所以判据只能放在运行时：累计「当天到期条数」（= 当天要排序/处理的队列长度）。
+/// 该量与实测耗时近似线性（release 约 1e6–5e6 条/秒，debug 约 8e5），
+/// 且判定点与墙钟无关（同参数必在同一天、同一积压处中止）。
+///
+/// 阈值 `6e7` 的取法：
+///   - **必须放行**：文档里所有 `simulate` 配置 + 上一轮的建议值
+///     （`--days 22361 --new-per-day 1`）累计量最大 4.6e5 —— 130 倍余量；
+///     顺带放行 8 s 级的 `--days 2000 --new-per-day 20 --review-limit 20`（4.0e7）。
+///   - **必须拦下**：实测 ≥120 s 的那档累计量 ≥1e8（`--days 5000
+///     --new-per-day 20 --review-limit 200` 是 1.75e8 / release 52.8 s /
+///     debug 221 s），在 6e7 处中止 ⇒ 实测中止时间 release ~15 s、debug ~70 s，
+///     两侧都 < 120 s。
+///   - 没有可判定的启动时代理量能分开这两侧（见 `API.md` §5.1 的实测表），
+///     所以这里是**运行时**判据，不是「按公式拒绝」的假守卫。
+fn simulate_work_limit() -> Int64 {
+  60000000L
+}
+
+///|
+/// 撞上运行时预算时的错误消息（纯函数，供 `cmd_simulate` 与回归用例共用）。
+///
+/// 两条建议都必须**可执行**：
+///   - `--days` 降到 `abort.day` 以内：第 `abort.day` 天之前的累计量必然 ≤ 预算
+///     （预算是那一天才超的），所以这条是**可证的**，回归用例做了双向验证
+///     （`simulate_budget_wbtest.mbt`：d 通过、d+1 在同一位置中止）；
+///   - `--review-limit 0`（不限）：积压不增长时每天只处理当天到期的卡，
+///     成本回归线性（实测 `--days 5000 --new-per-day 20 --review-limit 0`
+///     累计 1.3e6 条 / release 1.2 s）。
+fn simulate_budget_error(
+  abort : @lib.SimAbort,
+  days : Int32,
+  new_per_day : Int32,
+  review_limit : Int32,
+) -> String {
+  let head = "用法错误: simulate 的运行时工作量超过预算（累计到期条数上限 \{abort.limit}，判据与墙钟无关）：第 \{abort.day + 1} 天已累计 \{abort.work} 条，当天到期 \{abort.due_cards} 张、积压 \{abort.backlog} 张，--review-limit \{review_limit} 消化不了 —— 积压越堆越大，每天要在更长的队列上排序/扫描"
+  if abort.day >= 1 {
+    head +
+    "\n  建议: 把 --days 降到 \{abort.day} 以内（第 \{abort.day} 天之前的累计量在预算内，实测该配置 exit 0）；或把 --review-limit 0（不限）——积压不再增长时成本回归线性"
+  } else {
+    head +
+    "\n  建议: 第 1 天就超预算，先把 --new-per-day（当前 \{new_per_day} 张/天）降下来，或把 --review-limit 0（不限）再试"
   }
 }
 
@@ -1357,12 +1420,27 @@ fn cmd_simulate(args : Args) -> Int32 {
     grade_fn: @lib.grade_policy_with_seed(policy, seed),
     seed,
   }
-  // R1 修复：retention 现在真正传给调度器。SM-2/Leitner 没有这个参数
-  // （算法局限），此时如实告知而不是沉默地忽略。fsrs 越界被夹时，
-  // 参数行打印**生效值**并附提示行——打印请求值会让用户以为 0.3 生效了。
   let s = @lib.AnyScheduler::by_name_with_retention(
     sched_name, target_retention,
   )
+  // **第四道守卫：运行时工作预算**（2026-11-13 追加轮）。
+  //
+  // 前三道都是「启动时按三个参数算一个数」，它们算不出**积压**——积压是
+  // 运行时涌现的。实测（native release，`--days 2000 --new-per-day 20`，
+  // 只改 `--review-limit`）：rl=20 → 9.2 s、rl=50 → 7.0 s、rl=200 → 3.1 s、
+  // rl=500/2000 → 0.3 s，而五组的扫描量完全相同（4e7）。所以主导项是
+  // 「积压能不能被 rl 消化」，只能在使用时用累计工作量判定（与墙钟无关）。
+  let outcome = @lib.simulate_with_budget(s, cfg, simulate_work_limit())
+  let res = match outcome {
+    @lib.Completed(r) => r
+    @lib.Aborted(a) => {
+      println(simulate_budget_error(a, days, new_per_day, review_limit))
+      return 2
+    }
+  }
+  // R1 修复：retention 现在真正传给调度器。SM-2/Leitner 没有这个参数
+  // （算法局限），此时如实告知而不是沉默地忽略。fsrs 越界被夹时，
+  // 参数行打印**生效值**并附提示行——打印请求值会让用户以为 0.3 生效了。
   if sched_name != "fsrs" && target_retention != 0.9 {
     println(
       "提示: " +
@@ -1378,7 +1456,6 @@ fn cmd_simulate(args : Args) -> Int32 {
     println(retention_hint_line)
   }
   let effective_r = effective_retention(sched_name, target_retention)
-  let res = @lib.simulate(s, cfg)
   println("模拟: " + s.name() + " / " + policy + " 策略")
   println(
     "参数: " +

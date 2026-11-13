@@ -86,6 +86,8 @@ pub fn simulate(AnyScheduler, SimConfig) -> SimResult
 
 pub fn[T : Scheduler] simulate_with(T, SimConfig) -> SimResult
 
+pub fn[T : Scheduler] simulate_with_budget(T, SimConfig, Int64) -> SimOutcome
+
 pub fn sm2_default_ease() -> Double
 
 pub fn sm2_ease_delta(Int32) -> Double
@@ -301,6 +303,15 @@ pub fn ReviewLog::push(Self, ReviewEvent) -> Unit
 pub fn ReviewLog::to_jsonl(Self) -> String
 
 #derive(@debug.Debug)
+pub(all) struct SimAbort {
+  day : Int32
+  backlog : Int32
+  due_cards : Int32
+  work : Int64
+  limit : Int64
+}
+
+#derive(@debug.Debug)
 pub(all) struct SimConfig {
   days : Int32
   new_per_day : Int32
@@ -319,6 +330,12 @@ pub(all) struct SimDay {
   reviewed : Int32
   backlog : Int32
   retained : Int32
+}
+
+#derive(@debug.Debug)
+pub(all) enum SimOutcome {
+  Completed(SimResult)
+  Aborted(SimAbort)
 }
 
 #derive(@debug.Debug)

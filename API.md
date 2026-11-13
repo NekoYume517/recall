@@ -419,6 +419,28 @@ pub(all) struct SimResult {
 
 pub fn simulate(scheduler : Scheduler, config : SimConfig) -> SimResult
 
+/// **运行时工作预算**（2026-11-13 追加轮）：主循环累计 `Σ due_cards`
+/// 超过 `work_limit` 就中止。`simulate` / `simulate_with` 等价于
+/// `work_limit = Int64.MAX`（不限），因此 advice 的探测路径不受影响。
+pub(all) struct SimAbort {
+  day : Int32          // 中止发生的那一天（0 基）
+  backlog : Int32      // 当天结束时的积压（到期但没排上）
+  due_cards : Int32    // 当天的到期条数（= 当天要排序/处理的队列长度）
+  work : Int64         // 中止时已累计的到期条数
+  limit : Int64        // 预算
+}
+
+pub(all) enum SimOutcome {
+  Completed(SimResult)
+  Aborted(SimAbort)
+}
+
+pub fn simulate_with_budget[T : Scheduler](
+  s : T,
+  config : SimConfig,
+  work_limit : Int64,
+) -> SimOutcome
+
 /// 一组常用评分策略，供 CLI 使用
 pub fn grade_policy(name : StringView) -> ((CardState) -> Grade)
 ```
@@ -478,13 +500,14 @@ CLI 是显式调用、结果逐字节可复现，秒级到两分钟的等待是�
 顶部说明。若将来确实需要提速，可选方向是优化 `simulate` 的单次成本
 （搜索方向与上界不动）。
 
-**CLI 的量级守卫**（2026-11-12 遗留项 A1，2026-11-13 补 `simulate` 的扫描量）。
+**CLI 的量级守卫**（2026-11-12 遗留项 A1；2026-11-13 补扫描量与运行时预算）。
 
-`simulate` 有**两道**守卫，因为它的成本有两个形状不同的主项：
+`simulate` 有**三道**守卫：前两道是启动时的，第三道是运行时的。
 
 ```
-卡数     = days × new_per_day                    <= 100000        （内存）
-扫描量   = new_per_day × days² / 2               <= 250000000     （时间）
+卡数     = days × new_per_day                    <= 100000        （内存，启动时）
+扫描量   = new_per_day × days² / 2               <= 250000000     （时间，启动时）
+工作预算 = Σ_d due_cards                         <= 60000000      （时间，运行时）
 ```
 
 扫描量那一项来自 `simulate_with` **每天两趟全表扫描**（找 due、统计 backlog），
@@ -509,6 +532,56 @@ CLI 是显式调用、结果逐字节可复现，秒级到两分钟的等待是�
 得到 1 × 100000² ÷ 2 = 4999950000（--days 100000，--new-per-day 1）
   建议: 保持 --new-per-day 1 时把 --days 降到 22361 以内（扫描量与 --days 的平方成正比，调 --days 才是最有效的一侧）
 ```
+
+**第三道：运行时工作预算**（2026-11-13 追加轮）。前两道都是「启动时按三个
+参数算一个数」，它们**算不出积压**——积压是运行时涌现的。决定性实测
+（native release，`--days 2000 --new-per-day 20`，只改 `--review-limit`；
+五组的扫描量都是 `4.0e7`）：
+
+| `--review-limit` | 耗时 | 最终积压 |
+|---|---|---|
+| 20 | 9.2 s | 39 844 |
+| 50 | 7.0 s | 39 275 |
+| 200 | 3.1 s | 22 451 |
+| 500 | 0.3 s | 0 |
+| 2000 | 0.3 s | 0 |
+
+扫描量相同、耗时差 30 倍 ⇒「`days × review_limit`」和「扫描量」都不是主导项，
+**积压能不能被 `--review-limit` 消化**才是；而积压在启动时不可计算（它由调度器
+给出的间隔分布与三个参数交互决定）。所以判据只能放在运行时：主循环每天累计
+「当天到期条数」`Σ due_cards`（= 当天要排序/处理的队列长度，实测与耗时近似
+线性：release 约 `1e6–5e6` 条/秒，`moon run` debug 约 `8e5`），超过 `6e7` 立即
+中止并 exit 2。
+
+判据**与墙钟无关**：同一配置两次运行必在同一天、同一积压处中止（`SimAbort`
+逐字段可复现，`cmd/recall/simulate_budget_wbtest.mbt` 锁定），所以换机器、
+换构建模式只会改变「多久到达中止点」，不改变中止点本身。
+
+阈值两侧（本机实测）：
+
+| 侧 | 配置 | `Σ due` | 结果 |
+|---|---|---|---|
+| 必须放行 | 文档里每条 `simulate`（90/20/200、90/20/50、60/20/30） | `7.7e3 – 5.2e4` | exit 0，<1 s |
+| 必须放行 | 上一轮的建议值 `--days 22361 --new-per-day 1` | `4.6e5` | exit 0，0.7 s |
+| 必须放行 | `--days 2000 --new-per-day 20 --review-limit 20` | `4.0e7` | exit 0，7.7 s |
+| 必须拦下 | `--days 5000 --new-per-day 20 --review-limit 200` | `1.75e8` | 修前 52.8 s（release）/ 221 s（debug）；现在 **16.6 s exit 2** |
+
+中止消息给两条**可执行**建议：
+
+1. `--days` 降到中止那天之前——第 `day` 天之前的累计量必然 ≤ 预算（预算是
+   那一天才超的），所以这条可证，且做了双向实测：`--days 3292` exit 0、
+   `--days 3293` 在同一位置（第 3293 天、`60040991` 条）中止；
+2. `--review-limit 0`（不限）：积压不增长时每天只处理当天到期的卡，成本回归
+   线性（`--days 5000 --new-per-day 20 --review-limit 0` = `1.3e6` 条 / 1.2 s）。
+
+```
+用法错误: simulate 的运行时工作量超过预算（累计到期条数上限 60000000，判据与墙钟无关）：第 3293 天已累计 60040991 条，当天到期 51001 张、积压 50801 张，--review-limit 200 消化不了 —— 积压越堆越大，每天要在更长的队列上排序/扫描
+  建议: 把 --days 降到 3292 以内（第 3292 天之前的累计量在预算内，实测该配置 exit 0）；或把 --review-limit 0（不限）——积压不再增长时成本回归线性
+```
+
+库层 `simulate_with_budget` 接收预算参数，`simulate` / `simulate_with` 仍是
+「不限预算」，所以 `advice` 的探测路径完全不受影响（它有自己的成本守卫，
+下面那段）。
 
 `advice` 的成本形状又是另一种：它是**探测次数 × 单次模拟**，最坏
 

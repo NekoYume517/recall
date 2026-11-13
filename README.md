@@ -82,6 +82,14 @@ moon run cmd/recall -- simulate --scheduler fsrs --days 90 --new-per-day 20 --re
 moon run cmd/recall -- curve --log examples/reviews.jsonl --buckets 10
 ```
 
+**量级守卫**：`simulate` 在启动时拒绝「卡数 / 扫描量」超界的参数（exit 2），
+运行中还有一道**工作预算**——`--days` 很大而 `--review-limit` 小到消化不了积压时
+（例如 `--days 5000 --new-per-day 20 --review-limit 200`，积压会堆到八万多张），
+它会在累计到期条数超过 `6e7` 时中止并 exit 2，**而不是无声地跑几分钟**
+（修前同一个命令要 221 s；现在 16.6 s 中止，`moon run` 下 50.7 s）。
+代价是慢与快的分界由「积压能不能被每日复习上限消化」决定，与参数总量无关
+——同一份扫描量下 `--review-limit 500` 只要 0.3 s。详见 `API.md` §5.1。
+
 ## 命令
 
 ```bash
