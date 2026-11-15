@@ -95,7 +95,7 @@ moon run cmd/recall -- curve --log examples/reviews.jsonl --buckets 10
 ```bash
 recall replay   --log <file.jsonl> --scheduler sm2|fsrs|leitner [--json]
 recall compare  --log <file.jsonl> --a sm2 --b fsrs
-recall simulate --scheduler fsrs --days 90 --new-per-day 20 --review-limit 200 --policy realistic
+recall simulate --scheduler fsrs --days 90 --new-per-day 20 --review-limit 200 --policy realistic [--retention 0.9]
 recall stats    --log <file.jsonl>
 recall curve    --log <file.jsonl> --buckets 10
 ```

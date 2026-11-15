@@ -617,7 +617,12 @@ CLI 是显式调用、结果逐字节可复现，秒级到两分钟的等待是�
 ```
 
 三个诚实分支：
-- 连 0 张新卡都清不了存量 → 建议 0，summary 明说"存量太大"
+- 连 0 张新卡都清不了存量 → 建议 0，summary 明说"存量太大"。
+  （2026-11-15 审计注：模拟器从**空状态**起步，`new_per_day=0` 时没有
+  卡进入模拟、最终积压恒为 0，而 `target_backlog < 0` 又在入口被
+  RJ-A5 拒绝——`0 > target ≥ 0` 恒假，这条分支当前**不可达**，仅作
+  防御性代码保留（「存量」这种输入还不存在）；
+  `src/advice_deadbranch_test.mbt` 锁定 f(0)=0。）
 - 上界内绰绰有余 → 直接返回 review_limit，提示可以调大上限
 - 反直觉行为被自然捕捉：**学太快反而积压**（超过消化能力后，每天
   塞得越多、未复习的卡积得越多）——这正是必须用模拟而非公式的证据
@@ -708,7 +713,7 @@ pub fn retention_curve(
 ```
 recall replay   --log <file.jsonl> --scheduler sm2|fsrs|leitner [--json]
 recall compare  --log <file.jsonl> --a sm2 --b fsrs
-recall simulate --scheduler fsrs --days 90 --new-per-day 20 --review-limit 200 --policy realistic
+recall simulate --scheduler fsrs --days 90 --new-per-day 20 --review-limit 200 --policy realistic [--retention 0.9] [--seed N]
 recall advice   --scheduler fsrs --days 90 --review-limit 200 --target-backlog 0 [--policy realistic] [--retention 0.9] [--seed N]
 recall stats    --log <file.jsonl>
 recall curve    --log <file.jsonl> --buckets 10
