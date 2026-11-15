@@ -1909,6 +1909,65 @@ fn cmd_advice(args : Args) -> Int32 {
 }
 
 // ---------------------------------------------------------------------------
+// 值形参数的 flag 形态检查（2026-11-15 审计：三态一致性补全）
+// ---------------------------------------------------------------------------
+
+///|
+/// 每个子命令里「**必须带值**」的参数键（布尔键除外）。
+///
+/// `parse_args` 对 `--key value` 的规则是「下一项以 `--` 开头就不当值」，
+/// 于是 `simulate --days --review-limit 200` 会把 `--days` 收进 `flags`
+/// —— 而值形参数的读取点用 `get_opt` 区分「未提供」（回退默认）与
+/// 「提供了但非法」（exit 2），flag 形态恰好落进前者：**静默跑默认值
+/// 且 exit 0**。三种「提供了但不对」的形态必须一致：
+///
+///     --days abc     → 数值解析失败，exit 2
+///     --days=        → 空串解析失败，exit 2
+///     --days --rl 5  → 修复前 exit 0 + 默认 90；修复后 exit 2
+///
+/// replay 的 `--json` / `--anki` 是真正的布尔参数（`Args::has` 消费），
+/// 不在清单里，行为不变。
+fn value_required_keys(sub : String) -> Array[String] {
+  match sub {
+    "replay" => ["log", "scheduler"]
+    "compare" => ["log", "a", "b"]
+    "simulate" =>
+      [
+        "scheduler", "days", "new-per-day", "review-limit", "policy", "seed", "retention",
+      ]
+    "advice" =>
+      [
+        "scheduler", "days", "review-limit", "target-backlog", "policy", "retention",
+        "seed",
+      ]
+    "stats" => ["log"]
+    "curve" => ["log", "buckets"]
+    _ => []
+  }
+}
+
+///|
+/// 值形参数以 `--flag` 形态出现（键后没有跟值）时的用法错误消息。
+/// 合法返回空串。多个违例全部列出（与未知键的报错口径一致）。
+fn flag_shaped_value_error(sub : String, args : Args) -> String {
+  let required = value_required_keys(sub)
+  if required.length() == 0 {
+    return ""
+  }
+  let bad : Array[String] = []
+  for key, _ in args.flags {
+    if required.contains(key) {
+      bad.push("--" + key)
+    }
+  }
+  if bad.length() == 0 {
+    return ""
+  }
+  bad.sort_by(fn(a, b) { a.lexical_compare(b) })
+  "用法错误: 参数 \{bad.join(", ")} 需要一个值（--key value 或 --key=value），不能只写键名"
+}
+
+// ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
 
@@ -1988,6 +2047,14 @@ fn main {
       println(
         "用法错误: 未知参数 \{unknown_text}（\{sub} 接受: \{allowed_text}）",
       )
+      @sys.exit(2)
+    }
+    // 值形参数的 flag 形态：键写了但值位置是另一个 -- 开头的 token（或
+    // 没有 token）。此时该参数会被归进 flags、读取点视同「未提供」而
+    // 静默回退默认值 —— 与「--days abc / --days= 都 exit 2」三态不一致。
+    let flag_err = flag_shaped_value_error(sub, args)
+    if flag_err.length() > 0 {
+      println(flag_err)
       @sys.exit(2)
     }
   }
