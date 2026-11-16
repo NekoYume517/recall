@@ -308,15 +308,19 @@ fn parse_double_loose(s : String) -> Double? {
 /// 防护：定点换算 `v * 10^digits` 用 Int64 承载，超出 Int64 表示范围
 /// （约 9.22e18）时会静默饱和成 92233720368547758.07 这类垃圾值——
 /// 合法输入（`elapsed_days` 允许任意有限 Double，如 1e300）也会触发。
-/// 超出定点安全范围时退回 `Double::to_string`（指数形式），长度受控
-/// 且量级诚实。
+/// 超出定点安全范围，或非零值会按请求精度舍成零时，退回
+/// `Double::to_string`（指数形式），长度受控且量级诚实。
 fn fmt_float(x : Double, digits : Int32) -> String {
   // Int64 定点安全上界：留出 0.5 的进位余量后仍远小于 2^63-1
   let fixed_limit = 9.0e18
   let scale_dbl = @math.pow(10.0, digits.to_double())
   let mag = if x < 0.0 { -x } else { x }
-  if mag.is_nan() || mag * scale_dbl > fixed_limit {
-    // 非有限或定点溢出：交给 Double 自己的字符串化（指数形式）
+  let scaled_mag = mag * scale_dbl
+  if mag.is_nan() ||
+    scaled_mag > fixed_limit ||
+    (mag > 0.0 && scaled_mag < 0.5) {
+    // 非有限、定点溢出，或非零值会按请求精度舍成零：交给 Double
+    // 自己的字符串化（指数形式），避免把 5e-324 天标成 0.0000 天。
     return x.to_string()
   }
   let neg = x < 0.0
