@@ -316,9 +316,7 @@ fn fmt_float(x : Double, digits : Int32) -> String {
   let scale_dbl = @math.pow(10.0, digits.to_double())
   let mag = if x < 0.0 { -x } else { x }
   let scaled_mag = mag * scale_dbl
-  if mag.is_nan() ||
-    scaled_mag > fixed_limit ||
-    (mag > 0.0 && scaled_mag < 0.5) {
+  if mag.is_nan() || scaled_mag > fixed_limit || (mag > 0.0 && scaled_mag < 0.5) {
     // 非有限、定点溢出，或非零值会按请求精度舍成零：交给 Double
     // 自己的字符串化（指数形式），避免把 5e-324 天标成 0.0000 天。
     return x.to_string()
