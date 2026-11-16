@@ -155,18 +155,23 @@ pub fn retention_curve(
   if samples.length() == 0 {
     return []
   }
-  if max_elapsed == 0.0 {
+  // --- 2. 定桶宽 ---
+  let width = max_elapsed / n_buckets.to_double()
+  if max_elapsed == 0.0 || width == 0.0 {
+    // 全零样本共用一个 [0,0] 桶。有限正 max 极小时，max/n 也可能
+    // 下溢为 0；此时无法表示非退化等宽桶，退化为一个真实范围桶。
+    // 旧兜底把宽度改成 1 天，会把 5e-324 天的样本标成 [0,1]。
     let mut successes = 0
     for (_, grade) in samples {
       if is_recalled(grade) {
         successes = successes + 1
       }
     }
-    return [(0.0, 0.0, successes.to_double() / samples.length().to_double())]
+    return [
+      (0.0, max_elapsed, successes.to_double() / samples.length().to_double()),
+    ]
   }
-  // --- 2. 定桶宽 ---
-  let width = max_elapsed / n_buckets.to_double()
-  let safe_width = if width <= 0.0 { 1.0 } else { width }
+  let safe_width = width
   let totals = Array::make(n_buckets, 0)
   let passes = Array::make(n_buckets, 0)
   for (iv, grade) in samples {

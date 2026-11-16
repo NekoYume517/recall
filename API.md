@@ -708,6 +708,10 @@ pub fn retention_curve(
 计入分母。它不按间隔样本数量加权；没有有效样本时返回 0。手工构造
 `CardStats` 时也应遵循上述约定。
 
+当 `max_elapsed > 0` 但 `max_elapsed / buckets` 在 Double 中下溢为 0 时，
+无法表示非退化的等宽桶；`retention_curve` 返回单个 `[0, max_elapsed]` 桶，
+而不是把桶宽擅自改成 1 天。
+
 ## 7. CLI `cmd/recall/main.mbt`
 
 ```
