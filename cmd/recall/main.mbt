@@ -62,6 +62,8 @@ fn parse_args(argv : Array[String]) -> Args {
           // 空值也写入 params（值为空串），让调用方有机会报「提供了但非法」；
           // 静默丢弃才是缺陷。
           params[key] = value
+          // 同一键的后一次出现覆盖前一次，跨 params/flags 也一样。
+          flags.remove(key)
           i = i + 1
           continue
         }
@@ -70,9 +72,11 @@ fn parse_args(argv : Array[String]) -> Args {
       let has_next = i + 1 < argv.length()
       if has_next && !argv[i + 1].has_prefix("--") {
         params[body] = argv[i + 1]
+        flags.remove(body)
         i = i + 2
       } else {
         flags[body] = true
+        params.remove(body)
         i = i + 1
       }
     } else {
