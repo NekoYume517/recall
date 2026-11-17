@@ -139,8 +139,12 @@ pub fn initial_difficulty(w : Array[Double], rating : Int32) -> Double {
 ///|
 /// 评分（FSRS 的 1..4 刻度）夹到定义域内。
 ///
-/// `initial_stability` 与 `initial_difficulty` 的同一个前置条件只在这里定义
-/// 一次：两处入口都夹，避免「一处夹一处不夹」（第十二轮审计，P3）。
+/// 接收 `rating` 的公开公式入口有四个（`initial_stability` /
+/// `initial_difficulty` / `next_difficulty` / `success_chain`），同一个前置条件
+/// 只在这里定义一次、四处入口都夹，避免「一处夹一处不夹」：
+/// 第十二轮审计（P3）修的是前两处，第十三轮审计（P3）补的是后两处
+/// （`next_difficulty(w, d, 0) ≠ next_difficulty(w, d, 1)`，而前两处的
+/// `(w, 0)` 与 `(w, 1)` 早就相同）。
 fn clamp_rating(rating : Int32) -> Int32 {
   if rating < 1 {
     1
@@ -203,7 +207,14 @@ fn clamp_difficulty(d : Double) -> Double {
 /// 底层公式前置条件：`w` 至少 19 项；调用方负责验证有限性和范围。
 /// 推荐通过 `Fsrs::with_params_checked` 构造调度器。
 pub fn next_difficulty(w : Array[Double], d : Double, rating : Int32) -> Double {
-  let g = rating.to_double()
+  // `rating` 的定义域（1..4）与两处 `initial_*` 同源，夹取也只有一处
+  // （第十三轮审计，P3）：第十二轮把「只夹一处」修成 `clamp_rating` 时只接到
+  // `initial_stability` / `initial_difficulty`，这个第三入口漏了 ——
+  // `next_difficulty(w, 5.0, 0) = 7.4146…`（按 g=0 算，比 Again 还难）而
+  // `(w, 5.0, 1) = 6.6070…`，同一张卡的「初始难度」按 Again 算、
+  // 「难度推进」按域外的 g=0 算。调度器路径不可达（`fsrs_rating` 只产出
+  // 1..4，夹取是恒等），库级直接调用可达。
+  let g = clamp_rating(rating).to_double()
   // w[6]：难度增量系数
   let raw_delta = -w[6] * (g - 3.0)
   // linear damping：离上限越远，推进越多；已在上限则推进为 0
@@ -428,22 +439,28 @@ pub fn stability_after_lapse(
 ///
 /// `steps = 0` 返回初始稳定性。每一步的 elapsed 固定 1.0，这是校验器
 /// 关心的形态：长期路径的最小步进。底层公式前置条件：`w` 至少 19 项。
+///
+/// `rating` 在这里**只夹一次**（第十三轮审计，P3）：四个下游调用点
+/// （`initial_stability` / `initial_difficulty` 自己会夹，`next_difficulty` /
+/// `stability_after_*` 依赖入参在域内）拿到的必须是同一个值，否则
+/// 「初始状态按 g=1、推进按 g=0」这类混口径会重新出现。
 pub fn success_chain(
   w : Array[Double],
   rating : Int32,
   steps : Int32,
 ) -> Double {
-  let mut d = initial_difficulty(w, rating)
-  let mut s = initial_stability(w, rating)
+  let g = clamp_rating(rating)
+  let mut d = initial_difficulty(w, g)
+  let mut s = initial_stability(w, g)
   let mut i = 0
   while i < steps {
     let r = forgetting_curve(1.0, s)
     // 先算新 D，但稳定性仍用**旧** d —— 与 step 的推进一致
-    let d_next = next_difficulty(w, d, rating)
-    s = if rating == 1 {
+    let d_next = next_difficulty(w, d, g)
+    s = if g == 1 {
       stability_after_lapse(w, d, s, r)
     } else {
-      stability_after_success(w, d, s, r, rating)
+      stability_after_success(w, d, s, r, g)
     }
     d = d_next
     i = i + 1
