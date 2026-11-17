@@ -58,6 +58,19 @@ fn parse_args(argv : Array[String]) -> Args {
     let tok = argv[i]
     if tok.has_prefix("--") {
       let body = tok.substring(start=2, end=tok.length())
+      // **键名为空**（单独一个 `--`）不是参数（第十三轮审计，P3）。
+      //
+      // `--` 是所有 CLI 的「选项结束」记号，本工具不支持它；但也不能把它
+      // 当成「名字为空的参数」：那样 `-- 5` 会把 `5` 静默收成空键的值
+      // （既不当位置参数报错、也不当非法值报错），而报错信息会打印成
+      // 「未知参数 （…）」——空名字的位置什么都没有，用户看不出写错了什么。
+      // 归入位置参数即可复用既有的第五种报错形态（`positional_args_error`），
+      // 它会如实列出多余的 `'--'`。
+      if body.length() == 0 {
+        positionals.push(tok)
+        i = i + 1
+        continue
+      }
       // --- 等号形式：按第一个 '=' 切成 key=value ---
       match body.find("=") {
         Some(eq) => {
@@ -490,6 +503,7 @@ fn usage_text() -> String {
     "  --anki           以 Anki 文本导入格式(TSV)输出最终状态 (仅 replay, 优先于 --json)",
     "", "参数写法: --key value 与 --key=value 等价；--flag 表示布尔开",
     "          同一参数重复给出时后者生效 (last-wins)", "          不以 -- 开头的裸参数会被拒绝（必须写成 --key value 或 --key=value）",
+    "          单独一个 -- 也不被接受：本工具没有「选项结束」记号，它会被当成多余的裸参数",
     "", "退出码: 0 成功 / 1 数据错误 / 2 用法错误", "",
   ]
   let sb = StringBuilder()
