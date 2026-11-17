@@ -22,11 +22,11 @@ moon version
 
 ```bash
 moon check
-moon test      # 593 个测试
+moon test      # 609 个测试
 moon build --target wasm
 ```
 
-预期：`Total tests: 593, passed: 593, failed: 0.`
+预期：`Total tests: 609, passed: 609, failed: 0.`
 
 > 这一行是**硬编码的期望值**：每加一条测试都要跟着改（2026-11-13 审计时它还停在
 > 482，比当时的 510 少 28 条——照着 DEMO 逐字比对会误判成回归；同日的追加轮补了
@@ -34,7 +34,9 @@ moon build --target wasm
 > 补 41 条，改到 **593**：`advice` 探测的运行时工作预算 6、`stats` 均值溢出与 JSON
 > 非有限守卫 8、`advice` 建议的「上限档 + 快速档」5、裸 token 报错 5、FSRS 数值面
 > 同族守卫 4、`simulate` 新卡口径 3、`Leitner` 盒数单一来源 4、权重难度分辨率 2、
-> 布尔参数显式 false 4）。
+> 布尔参数显式 false 4）；同日的第十三轮再补 16 条，改到 **609**：`Leitner` 空间隔表
+> 不再越界 panic 5、`to_jsonl` 的非有限 `elapsed_days` 落 0 4、FSRS `rating` 定义域
+> （`next_difficulty` / `success_chain`）4、CLI 的 `--` 裸 token 3）。
 
 ## 二、核心产出：积压预测
 
