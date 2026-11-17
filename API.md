@@ -358,10 +358,18 @@ pub impl Scheduler for Leitner
 
 **盒数只有一个来源**（2026-11-17 审计，P3）：`intervals` 与 `boxes` 都是
 `pub(all)` 字段，手工构造时可能不同步。`effective_boxes()` 取
-`min(boxes, intervals.length())`，`review` 的盒号夹取与 `interval_of` 的
-间隔查表**共用这一个上界**。修复前两处各用各的，`{ boxes: 10, intervals: [1.0] }`
+`min(max(boxes, 1), max(intervals.length(), 1))`，`review` 的盒号夹取与
+`interval_of` 的间隔查表**共用这一个上界**。修复前两处各用各的，`{ boxes: 10, intervals: [1.0] }`
 连续 Good 后得到 `difficulty = 6`（盒 6）而 `interval_days = 1.0`（盒 1 的间隔）
 ——同一张卡两个字段自相矛盾（红灯实测 `box=6 interval=1`）。
+
+**空间隔表**（2026-11-17 第十三轮审计，P1）：`{ boxes: n, intervals: [] }` 是
+上一条论证的盲区——`effective_boxes()` 对空表按「至少一盒」返回 1（盒号是
+1-based），但表里没有任何一项可读，修复前 `interval_of` 直接读 `intervals[0]`
+——**数组越界 panic**（wasm `unreachable`，进程级崩溃），`init` / `review`
+第一次调用就崩。现在空表按 **1 天**兜底（与「表项为 NaN / 非正值」同一个兜底
+值），退化语义因此自洽：盒 1、间隔 1 天、每天到期。判级 P1（崩溃而非错值）；
+可达性仍是 `pub(all)` 直构，`with_intervals(0, [])` 会显式 `Err`。
 
 自定义盒表请用带校验的构造器，长度不匹配直接报错，不接受两套定义：
 

@@ -53,7 +53,9 @@ pub fn Leitner::new() -> Leitner {
 /// 定义，不接受两套。输入数组会被复制（与 `Fsrs::with_params` 同一约定）。
 ///
 /// 手工构造的不同步实例不会崩：`effective_boxes()` 取两者较小值兜底，
-/// 于是它退化成「一致的最小盒数」，而不是两个字段自相矛盾。
+/// 于是它退化成「一致的最小盒数」，而不是两个字段自相矛盾；**空表**
+/// （`intervals: []`）另行按 1 天兜底，见 `interval_of`（第十三轮审计，P1：
+/// 修复前空表会在 `interval_of` 里数组越界 panic）。
 pub fn Leitner::with_intervals(
   boxes : Int32,
   intervals : Array[Double],
@@ -116,6 +118,20 @@ fn Leitner::effective_boxes(self : Leitner) -> Int32 {
 fn Leitner::interval_of(self : Leitner, box : Int32) -> Double {
   let last = self.effective_boxes()
   let b = if box < 1 { 1 } else if box > last { last } else { box }
+  // **空间隔表**（第十三轮审计，P1）：`effective_boxes()` 对空表按「至少一盒」
+  // 的约定返回 1（盒号是 1-based，`leitner_box_of` 也把 0 读成盒 1），但表里
+  // 没有任何一项可读。修复前这里直接 `intervals[b - 1]` = `intervals[0]` ——
+  // 手工构造 `{ boxes: n, intervals: [] }` 之后第一次 `init` / `review` 就
+  // **数组下标越界 panic**（wasm `unreachable`，进程级崩溃），而 `API.md` §3.3
+  // 明文写着「手工构造的不同步实例不会崩」。第十二轮把「盒数只有一个来源」
+  // 收敛到 `effective_boxes()` 时只论证了 `n >= 1` 这一端。
+  //
+  // 空表按 1 天兜底（与「表项为 NaN / 非正值」同一个兜底值），于是退化语义
+  // 是自洽的：盒 1、间隔 1 天、每天到期。可达性 = `pub(all)` 直构
+  // （DISCIPLINE §5.4）；带校验的 `Leitner::with_intervals(0, [])` 会 Err。
+  if b - 1 >= self.intervals.length() {
+    return 1.0
+  }
   let raw = self.intervals[b - 1]
   // 与 sm2_next_interval / fsrs interval_days 同法：源头夹到
   // [1, max_interval_days()]，NaN 与负数兜底成 1 天。
