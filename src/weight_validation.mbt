@@ -151,12 +151,18 @@ pub fn validate_fsrs_weights(w : Array[Double]) -> FsrsWeightCheck {
 /// 语义验证：用这份权重走一遍公式，检查输出可解释。
 ///
 /// 结构合法（在范围内）的权重仍可能语义病态：比如所有 S₀ 都顶到 100，
-/// 难度恒为 1 等。这里检查四个不变量：
+/// 难度恒为 1 等。这里检查**五个**不变量：
 ///
 ///   1. 四种首评的 S₀ 严格递增（Again < Hard < Good < Easy）
 ///   2. 同一评分下 S₀ 与 D₀ 有限
 ///   3. Good×5 的 S 序列单调不减且 < 10⁶ 天（约 2700 年，超出即病态）
 ///   4. Again 的间隔 < Easy 的间隔（评分敏感性还活着）
+///   5. **D₀ 必须随评分变化**（`D₀(1) > D₀(4)`）。第十二轮审计补：这段注释
+///      从一开始就把「难度恒为 1」当成要拦的病态，但四条实现里没有它——
+///      `w[4]=1, w[5]=0, w[6]=0`（全部落在 `weight_bounds` 内）能通过校验：
+///      D₀ ≡ 1、阻尼 (10-1)/9 = 1、增量 -w[6]·(g-3) = 0、回归目标也是 1
+///      ⇒ D 永远是 1。这正是 `docs/implementation.md` §4 记成真 bug 的
+///      「难度失去分辨率 ⇒ 系统性高估间隔增长」，严格版构造器不该给它背书。
 pub fn validate_fsrs_semantics(w : Array[Double]) -> FsrsWeightCheck {
   let issues : Array[FsrsWeightIssue] = []
   // 结构先过关才谈语义
@@ -214,6 +220,16 @@ pub fn validate_fsrs_semantics(w : Array[Double]) -> FsrsWeightCheck {
       index: -1,
       value: 0.0,
       why: "Again 的间隔 (\{i_again}) 必须 < Easy 的间隔 (\{i_easy})",
+    })
+  }
+  // 5. 难度分辨率：D₀ 必须真的随评分变化（否则 D 恒定、(11-D) 增益项退化）
+  let d0_again = initial_difficulty(w, 1)
+  let d0_easy = initial_difficulty(w, 4)
+  if !(d0_again > d0_easy) {
+    issues.push({
+      index: -1,
+      value: d0_again,
+      why: "D₀ 必须随评分递减（D₀(1) > D₀(4)），got D₀(1)=\{d0_again} / D₀(4)=\{d0_easy}——难度失去分辨率会系统性高估间隔增长",
     })
   }
   if issues.length() == 0 {
