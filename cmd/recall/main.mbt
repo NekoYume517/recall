@@ -624,6 +624,46 @@ fn advice_cost_over(days : Int32, review_limit : Int32) -> Bool {
 }
 
 ///|
+/// `advice` 的成本（探测次数 × 单次模拟成本 = `(hi+2) × days² × hi`），
+/// **饱和**到 Int64 上界。
+///
+/// `days` / `hi` 已被单轴守卫限到 `<= 1e5`，但 `1e5² × 1e5 × 1e5 = 1e20` 会
+/// 超出 Int64，所以在乘之前就按除法预检并饱和。调用方用
+/// `cost == Int64.MAX` 判「已饱和」。
+fn advice_cost_units(days : Int32, review_limit : Int32) -> Int64 {
+  let hi = if review_limit > 0 { review_limit } else { 500 }
+  let hi64 = hi.to_int64()
+  let d = days.to_int64()
+  let per_probe = d * d * hi64
+  let probes = hi64 + 2L
+  let max : Int64 = 9223372036854775807L
+  if per_probe > max / probes {
+    max
+  } else {
+    per_probe * probes
+  }
+}
+
+///|
+/// 成本占上限的**整数百分比**（用于在建议里标出「这一档有多慢」）。
+///
+/// 先除以 1% 的单位再算，避免成本接近上限时 `cost * 100` 再溢出；
+/// 饱和值直接按 100% 以上处理（`cost` 已达 `Int64.MAX` 说明远超上限）。
+fn advice_cost_percent(days : Int32, review_limit : Int32) -> Int64 {
+  let limit : Int64 = 2500000000L
+  let cost = advice_cost_units(days, review_limit)
+  if cost > 9223372036854775807L / 100L {
+    return 100L
+  }
+  let pct = cost / (limit / 100L)
+  if pct > 100L {
+    100L
+  } else {
+    pct
+  }
+}
+
+///|
 /// 超界时给出**按当前另一轴反算的可行值**（R-7 同族：报错必须给能执行的下一步）。
 ///
 /// 两侧都反算完必须**代回判定**（`advice_cost_over`）确认通过才写进建议——
@@ -634,14 +674,29 @@ fn advice_cost_over(days : Int32, review_limit : Int32) -> Bool {
 ///   即 `floor(sqrt(q+1)) - 1`（`q = limit / days²`）；
 /// - `--review-limit 0`（不限）不反算 `review-limit`：把它改成具体值就改掉了
 ///   「不限」语义，此时如实说只能减 `--days`。
+///
+/// ## 为什么还要给「快速档」（第十二轮审计，P3）
+///
+/// 反算出来的上界值**就是成本上限本身**，也就是最慢的一档：照
+/// `--days 5000 --review-limit 200` 的建议改成 `--days 248` 代回真跑，
+/// 实测 **245.96 s**（本机 release）。一个让人等四分钟的建议比不给建议更糟。
+/// 所以每条建议后面标出「上限档 + 成本占比」，并另给一条**同一公式、上限压到
+/// 1/8** 的快速档（同样代回判定后才写出来）。两侧的快速档都只是「同一根轴上
+/// 再收一档」，不改变 `--review-limit 0` 的「不限」语义。
 fn advice_cost_hint(days : Int32, review_limit : Int32) -> String {
   let limit : Int64 = 2500000000L
   let hi = if review_limit > 0 { review_limit } else { 500 }
   let hi64 = hi.to_int64()
   let d = days.to_int64()
-  let days_max = int64_sqrt_floor(limit / ((hi64 + 2L) * hi64))
+  let denom = (hi64 + 2L) * hi64
+  let days_max = int64_sqrt_floor(limit / denom)
   let q = limit / (d * d)
   let review_max = int64_sqrt_floor(q + 1L) - 1L
+  // 快速档：同一条成本公式，上限压到 1/8（≈ 三十秒量级而不是分钟量级）。
+  let fast_limit = limit / 8L
+  let days_fast = int64_sqrt_floor(fast_limit / denom)
+  let qf = fast_limit / (d * d)
+  let review_fast = int64_sqrt_floor(qf + 1L) - 1L
   let parts : Array[String] = []
   if days_max >= 1L && !advice_cost_over(days_max.to_int(), review_limit) {
     let keep = if review_limit == 0 {
@@ -649,13 +704,16 @@ fn advice_cost_hint(days : Int32, review_limit : Int32) -> String {
     } else {
       "保持 --review-limit \{review_limit} 时"
     }
-    parts.push(keep + "把 --days 降到 \{days_max} 以内")
+    parts.push(
+      keep +
+      "把 --days 降到 \{days_max} 以内（上限档：成本约 \{advice_cost_percent(days_max.to_int(), review_limit)}% 上限，是本守卫允准的最慢的一档）",
+    )
   }
   if review_limit > 0 &&
     review_max >= 1L &&
     !advice_cost_over(days, review_max.to_int()) {
     parts.push(
-      "保持 --days \{days} 时把 --review-limit 降到 \{review_max} 以内",
+      "保持 --days \{days} 时把 --review-limit 降到 \{review_max} 以内（上限档：成本约 \{advice_cost_percent(days, review_max.to_int())}% 上限）",
     )
   }
   let body = if parts.length() == 0 {
@@ -664,11 +722,31 @@ fn advice_cost_hint(days : Int32, review_limit : Int32) -> String {
     parts.join("；或")
   }
   let zero_note = if review_limit == 0 {
-    "（0 表示不限，搜索上界固定为 500；要保留「不限」语义只能减 --days）"
+    "；0 表示不限，搜索上界固定为 500，要保留「不限」语义只能减 --days"
   } else {
     ""
   }
-  "\n  建议: " + body + zero_note
+  // 快速档：两条都代回判定；只有真的更快（严格小于上限档）才写出来。
+  let fast : Array[String] = []
+  if days_fast >= 1L &&
+    days_fast < days_max &&
+    !advice_cost_over(days_fast.to_int(), review_limit) {
+    fast.push("--days \{days_fast}（--review-limit 不变）")
+  }
+  if review_limit > 0 &&
+    review_fast >= 1L &&
+    review_fast < review_max &&
+    !advice_cost_over(days, review_fast.to_int()) {
+    fast.push("--review-limit \{review_fast}（--days 不变）")
+  }
+  let fast_note = if fast.length() == 0 {
+    ""
+  } else {
+    "\n  更快的一档: " +
+    fast.join("；或") +
+    "——成本约为上限的 1/8"
+  }
+  "\n  建议: " + body + zero_note + fast_note
 }
 
 ///|
@@ -699,19 +777,14 @@ fn advice_cost_hint(days : Int32, review_limit : Int32) -> String {
 /// 因为 `1e5² × 1e5 × 1e5` 会超出 `Int64`。合法返回空串，非法返回错误消息
 /// （消息末尾附反算出的可行值，见 `advice_cost_hint`）。
 fn advice_cost_error(days : Int32, review_limit : Int32) -> String {
-  let limit : Int64 = 2500000000L
-  let hi = if review_limit > 0 { review_limit } else { 500 }
-  let hi64 = hi.to_int64()
-  let d = days.to_int64()
-  // `days` / `hi` 已被单轴守卫限到 <= 100000，`per_probe <= 1e15`，不会溢出。
-  let per_probe = d * d * hi64
-  let probes = hi64 + 2L
-  // 用除法比较，避免 `per_probe × probes` 在判定前溢出。
-  if per_probe <= limit / probes {
+  if !advice_cost_over(days, review_limit) {
     return ""
   }
+  let hi = if review_limit > 0 { review_limit } else { 500 }
+  let probes = hi.to_int64() + 2L
   let max : Int64 = 9223372036854775807L
-  let cost = if per_probe > max / probes { max } else { per_probe * probes }
+  // 成本与饱和判定集中在 `advice_cost_units` 一处（与建议里的百分比同源）。
+  let cost = advice_cost_units(days, review_limit)
   let suffix = if cost == max { "（已到 Int64 饱和值）" } else { "" }
   "用法错误: advice 的总成本（探测次数 × 单次模拟 = 探测上界 × --days² × --review-limit）必须 <= 2500000000，得到 \{probes} × \{days}² × \{hi} = \{cost}\{suffix}（--days \{days}，--review-limit \{review_limit}）" +
   advice_cost_hint(days, review_limit)
