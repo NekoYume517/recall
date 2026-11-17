@@ -54,6 +54,8 @@ pub fn leitner_default_intervals() -> Array[Double]
 
 pub fn load_advice(AnyScheduler, AdviceRequest) -> AdviceResult
 
+pub fn load_advice_with_budget(AnyScheduler, AdviceRequest, Int64) -> AdviceOutcome
+
 pub fn max_interval_days() -> Double
 
 pub fn next_difficulty(Array[Double], Double, Int32) -> Double
@@ -126,6 +128,18 @@ pub(all) suberror LogError {
 }
 
 // Types and methods
+#derive(@debug.Debug)
+pub(all) struct AdviceAbort {
+  new_per_day : Int32
+  sim : SimAbort
+}
+
+#derive(@debug.Debug)
+pub(all) enum AdviceOutcome {
+  AdviceCompleted(AdviceResult)
+  AdviceAborted(AdviceAbort)
+}
+
 #derive(@debug.Debug)
 pub(all) struct AdviceRequest {
   days : Int32
@@ -245,6 +259,7 @@ pub(all) struct Leitner {
 }
 pub fn Leitner::new() -> Self
 pub fn Leitner::with_boxes(Int32) -> Self
+pub fn Leitner::with_intervals(Int32, Array[Double]) -> Result[Self, String]
 pub impl Scheduler for Leitner
 
 #derive(@debug.Debug)
