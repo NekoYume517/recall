@@ -103,7 +103,7 @@ pub fn fsrs_rating(g : Grade) -> Int32 {
 /// 根因与 RC-7（`stability_after_success`）/ N-2（`stability_after_lapse`）
 /// 完全同型，处置也与它们逐字对齐：**非有限一律落到下限**。
 pub fn initial_stability(w : Array[Double], rating : Int32) -> Double {
-  let g = if rating < 1 { 1 } else if rating > 4 { 4 } else { rating }
+  let g = clamp_rating(rating)
   let idx = g - 1 // ← w 的下标就是评分减一
   if idx >= w.length() {
     return 1.0
@@ -126,17 +126,40 @@ pub fn initial_stability(w : Array[Double], rating : Int32) -> Double {
 /// 底层公式前置条件：`w` 至少 19 项；调用方负责验证有限性和范围。
 /// 推荐通过 `Fsrs::with_params_checked` 构造调度器。
 pub fn initial_difficulty(w : Array[Double], rating : Int32) -> Double {
-  let g = rating.to_double()
+  // 与 `initial_stability` 镜像：同一个前置条件（rating ∈ 1..4）两处都夹，
+  // 不能一处夹一处不夹（第十二轮审计，P3：`initial_difficulty(w, 0)` 与
+  // `initial_difficulty(w, 1)` 曾给出不同的 D，而 `initial_stability`
+  // 的两个结果相同）。
+  let g = clamp_rating(rating).to_double()
   // w[4]：基准；w[5]：敏感度
   let d = w[4] - @math.exp(w[5] * (g - 1.0)) + 1.0
   clamp_difficulty(d)
 }
 
 ///|
+/// 评分（FSRS 的 1..4 刻度）夹到定义域内。
+///
+/// `initial_stability` 与 `initial_difficulty` 的同一个前置条件只在这里定义
+/// 一次：两处入口都夹，避免「一处夹一处不夹」（第十二轮审计，P3）。
+fn clamp_rating(rating : Int32) -> Int32 {
+  if rating < 1 {
+    1
+  } else if rating > 4 {
+    4
+  } else {
+    rating
+  }
+}
+
+///|
 /// 难度夹到 [1, 10]。
 fn clamp_difficulty(d : Double) -> Double {
+  // 非有限一律落到**下限**，与项目另三处非有限兜底同一口径
+  // （S 的下限 0.1、EF 的下限 1.3、R 的下限 0）。修复前这里是 `5.0`
+  // ——一个看上去合理的中间值：既不是 API.md 写的「截断到 [1,10]」所蕴含的
+  // 恒等，也与同族三个函数不一致（第十二轮审计，P3）。
   if d.is_nan() {
-    5.0
+    1.0
   } else if d < 1.0 {
     1.0
   } else if d > 10.0 {
@@ -355,7 +378,13 @@ pub fn stability_after_lapse(
   // 变得脆弱）。`exp` 溢出成 +Inf 时 cap 退化成 0（→ 落到 0.1 下限），
   // 下溢成 0 时 cap 变成 +Inf（→ 不设限）；`s` 上面已保证是有限正数，
   // 两条极端路径都不会产出 NaN。
-  let short_cap = s / @math.exp(w[17] * w[18])
+  // 上限自身也要守卫（第十二轮审计，P3）：`w17`/`w18` 非有限时
+  // `exp(...)` 是 NaN ⇒ `s / NaN = NaN` ⇒ `next > NaN` 恒 false ⇒ 上限被
+  // **静默跳过**（同函数对 `s` 与 `next` 都有守卫，唯独上限没有）。
+  // 兜底取 FSRS-4.5 的上限 `s`：它比 `s/exp(w17·w18)` 松，但仍然是
+  // 「遗忘后的稳定性不得高于原稳定性」这条安全性质的界。
+  let cap_den = @math.exp(w[17] * w[18])
+  let short_cap = if cap_den.is_nan() { s } else { s / cap_den }
   if !is_finite(next) || next < 0.1 {
     // **非有限**（不只 NaN）一并落到下限（D3，2026-11-13 审计）：与成功路径
     // 的同一条判断逐字对齐。`+Inf` 有两条来路：长项被极端有限权重推成
@@ -445,13 +474,12 @@ pub fn success_chain(
 /// `add_days` 内部也有一层同样的夹取，双层防护。
 pub fn interval_days(s : Double, desired_retention : Double) -> Double {
   let s_eff = if s < 0.1 { 0.1 } else { s }
-  let dr = if desired_retention < 0.5 {
-    0.5
-  } else if desired_retention > 0.99 {
-    0.99
-  } else {
-    desired_retention
-  }
+  // 目标保持率的夹取/回退**只有一处权威**（`clamp_retention`，scheduler.mbt：
+  // NaN 与 (0,1) 外回退 0.9、越界夹到 [0.5,0.99]）。这里以前又写了一遍比较式，
+  // 而 `NaN < 0.5` 为 false ⇒ NaN 从守卫中间穿过去，最后靠下面 `raw.is_nan()`
+  // 兜成 **1 天**（最激进），与 `clamp_retention(NaN) = 0.9` 差 100 倍
+  // （第十二轮审计，P3）。
+  let dr = clamp_retention(desired_retention)
   let raw = s_eff / factor * (@math.pow(dr, 1.0 / decay) - 1.0)
   // NaN / Infinity 兜底：pow 在极端参数下可能给出非有限值
   let safe = if raw.is_nan() || raw < 0.0 { 1.0 } else { raw }
