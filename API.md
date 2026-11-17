@@ -447,6 +447,23 @@ pub fn grade_policy(name : StringView) -> ((CardState) -> Grade)
 
 `grade_policy` 至少支持：`optimistic`（总是 Good）、`realistic`（按 retrievability 概率抽样，用确定性伪随机）、`pessimistic`（按难度倾向 Hard/Again）。
 
+**未复习的新卡一律按 `R = 0.9` 抽样**（2026-11-17 审计，P3）。评分器只能看到
+`CardState`，而 `stability` 的语义按调度器分派（FSRS=S、SM-2=间隔镜像、
+Leitner=盒间隔）——`Leitner::init` 把 `stability` 写成盒 1 的间隔 1.0，
+于是「尚未建立记忆」看起来像「刚复习过、记得很牢」：`simulate` 把
+`interval_days` 换成真实流逝天数 0 之后，Leitner 新卡的 R 是 **1.0**，而
+FSRS / SM-2 是 0.9。实测首日「记住」率（`--days 1 --new-per-day 100`）：
+
+| 策略 | 修复前 Leitner | 修复后 Leitner | FSRS / SM-2（始终不变） |
+|---|---|---|---|
+| `realistic` | **100/100** | 90/100 | 90/100 |
+| `pessimistic` | **74/100** | 67/100 | 67/100 |
+
+这是「同一个用户模型对不同算法给出不同成功率」，`compare` 与 `advice` 的跨算法
+结论因此不是同口径。判据用**调度器无关**的 `phase == New`（只有从未复习过才是
+`New`），把它与 FSRS 的 `stability <= 0` 放在同一条规则里——**没有**给 Leitner
+凭空加遗忘曲线，Leitner 调度器本身一个字没改。
+
 **确定性要求**：模拟必须可复现。伪随机用固定种子的 LCG，不要用系统随机。
 
 ### 5.1 负载优化建议器 `src/advice.mbt`

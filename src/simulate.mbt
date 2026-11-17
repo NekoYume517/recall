@@ -157,7 +157,21 @@ pub(all) struct SimResult {
 ///
 /// `stability <= 0`（新卡，还没建立记忆）直接返回 0.9：默认能答对。
 fn policy_retrievability(cs : CardState) -> Double {
-  if cs.stability <= 0.0 {
+  // **未复习过的新卡**：三种调度器一律按默认 0.9（第十二轮审计，P3）。
+  //
+  // `stability` 的语义按调度器分派（FSRS=S、SM-2=间隔镜像、Leitner=盒间隔），
+  // 而 `Leitner::init` 会写 `stability = interval_of(1) = 1.0`——「尚未建立记忆」
+  // 在它身上看起来像「刚复习过、记得很牢」。`simulate_with` 又会把
+  // `interval_days` 换成真实流逝天数（新卡是 0），于是
+  //
+  //     Leitner：R = forgetting_curve(0, 1.0) = 1.0  ⇒ realistic 判 Easy、
+  //               pessimistic 的新卡永远不会被记成 Again（r×0.7 = 0.7）
+  //     FSRS/SM-2：stability = 0 ⇒ R = 0.9 ⇒ Good / 37% Again
+  //
+  // 同一个「用户模型」对同一张未复习的卡给出两个成功率，`compare` 与
+  // `advice` 的跨算法结论因此不是同口径。判据用**调度器无关**的 `phase`
+  // （只有从未复习过才是 `New`），不引入第二套遗忘曲线。
+  if cs.phase == New || cs.stability <= 0.0 {
     // 新卡（还没建立记忆）：默认能答对
     return 0.9
   }
