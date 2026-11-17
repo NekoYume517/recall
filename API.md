@@ -133,6 +133,16 @@ JSON 原文（round 后的整数），to_jsonl 原样写回。因此：
 
 `elapsed_days` 同理注意：`0` 与 `0.0` 的文本形式可能不同，按浮点比较而非字符串比较。
 
+**写出口的同一份判断**（2026-11-17 第十三轮审计，P2）：`elapsed_days` 的
+有限性守卫原本只在读入口（`field_double`：非有限 → `BadLine`）。两个公开
+构造器只把**负数**夹到 0，非有限值（`NaN` / `±Infinity`）原样进事件，
+`to_jsonl` 再把它们原样写成 `NaN` / `Infinity`——**不是 JSON 字面量**，
+产出的是本仓库自己也读不回来的文件。现在 `event_to_json` 是全部事件的
+**序列化出口**（`ReviewEvent` 是 `pub(all)`，直构字段可绕过构造器），非有限
+`elapsed_days` 一律落 **0**——下游对「非有限」与「0」的判定完全一致
+（`elapsed_days > 0.0` 才采用字面值，否则按时间戳回推），因此语义零变化、
+输出恒可被 `from_jsonl` 读回（`src/log_nonfinite_elapsed_serialization_regression_test.mbt` 锁定）。
+
 ## 3. 调度器接口 `src/scheduler.mbt`
 
 ```moonbit

@@ -233,6 +233,31 @@ pub fn ReviewLog::card_ids(self : ReviewLog) -> Array[String] {
 }
 
 ///|
+/// `elapsed_days` 的**写出口守卫**（第十三轮审计，P2）。
+///
+/// `NaN` / `±Infinity` 不是 JSON 字面量：`Json::number` 会把它们原样写成
+/// `NaN` / `Infinity`，于是 `to_jsonl` 产出一份**自己读不回来**的文件
+/// （读入口 `field_double` 拒收非有限值）。而「`elapsed_days` 必须有限」
+/// 这条判断此前只存在于读入口：两个公开构造器只把**负数**夹到 0
+/// （「负数在物理上无意义」），非有限值原样进事件。
+///
+/// 落 **0** 而不是别的哨兵，因为下游对「非有限」与「0」的判定完全一致
+/// （`review_interval` / `replay_with` 都是 `elapsed_days > 0.0` 才采用字面值，
+/// 否则按同卡时间戳回推），所以这个守卫**不改变任何语义**，只让输出合法：
+/// 内存里那份和写出去再读回来那份在 stats / replay 上逐字段相同。
+///
+/// 放在序列化层而不是构造器：`ReviewEvent` 是 `pub(all)`，直构字段可以完全
+/// 绕过构造器（DISCIPLINE §5.4），只有出口能覆盖全部事件——与
+/// `fmt_json_number`（CLI 的 JSON 出口守卫）是同一条修法在另一层的落地。
+fn json_elapsed_days(v : Double) -> Double {
+  if is_finite(v) {
+    v
+  } else {
+    0.0
+  }
+}
+
+///|
 /// 单条事件 → JSON 对象。字段顺序即输出顺序。
 fn event_to_json(ev : ReviewEvent) -> Json {
   let m : Map[String, Json] = Map([])
@@ -242,7 +267,7 @@ fn event_to_json(ev : ReviewEvent) -> Json {
   // **无损写回**（RJ-R）：写原始评分整数而不是枚举代表值 —— 原文 1/4
   // 不再变成 2/5。grade_raw 由 from_jsonl 记录、new 构造时取代表值。
   m[key_grade()] = Json::number(ev.grade_raw.to_double())
-  m[key_elapsed_days()] = Json::number(ev.elapsed_days)
+  m[key_elapsed_days()] = Json::number(json_elapsed_days(ev.elapsed_days))
   Json::object(m)
 }
 
