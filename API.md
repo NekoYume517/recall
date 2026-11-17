@@ -820,6 +820,14 @@ recall curve    --log <file.jsonl> --buckets 10
 
 退出码：0 成功，1 数据错误，2 用法错误。
 
+`--json` / `--anki` 是布尔参数，**显式 `false` 生效**：`--json=false` / `--json=0`
+关掉 JSON（打印表格），`--json` / `--json=` / `--json=true` 开启（2026-11-17 审计）。
+
+`--days 0` 在两个子命令上**有意不同**：`simulate --days 0` 是良定义的空结果
+（库层 `simulate_test.mbt` 也锁了 `days=0 ⇒ 空结果`，`args_wbtest.mbt` 锁了
+CLI 侧合法），而 `advice --days 0` 必须拒绝——`days` 出现在它的成本公式分母
+（`(hi+2)·days²·hi`）上，0 会让守卫失去意义。两处口径的差异写进了 usage 文案。
+
 `--json` 输出（`replay`）里的**每个浮点字段**都走 `fmt_json_number`：非有限值
 写成 `null`（JSON 没有 `Infinity` / `NaN` 字面量），有限值照定点/指数输出。
 因此「输出可以被任何 JSON 解析器读」是一条可断言的契约

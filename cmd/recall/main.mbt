@@ -114,6 +114,23 @@ fn Args::get_opt(self : Args, key : String) -> String? {
 ///|
 
 ///|
+fn Args::flag(self : Args, key : String) -> Bool {
+  // **布尔参数的生效值**（第十二轮审计，P3）：`--json=false` / `--json=0`
+  // 必须真的关掉。修复前只看「键在不在」（`Args::has`），于是
+  // `replay --log x --json=false` 照样输出 JSON —— 显式给了 false 却被当成
+  // 开启，与「`--key=value` 等价于 `--key value`」的自我描述直接冲突。
+  // 其余取值按「非空即真」处理（`--json=` 等价 `--json`，既有规则不变）。
+  if !self.has(key) {
+    return false
+  }
+  match self.params.get(key) {
+    Some(v) => !(v == "false" || v == "0")
+    // `--json`（纯 flag 形态）与 `--json=`（空串）都按「开」处理。
+    None => true
+  }
+}
+
+///|
 fn Args::has(self : Args, key : String) -> Bool {
   match self.params.get(key) {
     Some(_) => true
@@ -461,8 +478,8 @@ fn usage_text() -> String {
     "  recall stats    --log FILE", "  recall curve    --log FILE [--buckets 10]",
     "", "选项:", "  --log            复习日志路径 (JSONL, 每行一个事件)",
     "  --scheduler      调度器: sm2 | fsrs | leitner", "  --a / --b        compare 的左右两侧调度器",
-    "  --days           模拟天数 (默认 90, 上限 100000)", "  --new-per-day    每天新增卡片数 (默认 20)",
-    "  --days × --new-per-day 的乘积上限 100000 张（每次模拟逐日逐卡推进）",
+    "  --days           模拟天数 (默认 90, 上限 100000；simulate 允许 0 = 空结果，advice 必须 >= 1)",
+    "  --new-per-day    每天新增卡片数 (默认 20)", "  --days × --new-per-day 的乘积上限 100000 张（每次模拟逐日逐卡推进）",
     "  --new-per-day × --days² ÷ 2 的扫描量上限 250000000（模拟器每天两趟全表扫描），超界 exit 2",
     "  --review-limit   每天复习上限, 0 表示不限 (默认 200)", "  --policy         评分策略: optimistic | realistic | pessimistic (默认 realistic)",
     "  advice 的成本守卫: 探测上界 × --days² × --review-limit <= 2500000000，超界 exit 2",
@@ -1090,11 +1107,11 @@ fn cmd_replay(args : Args) -> Int32 {
   }
   let s = @lib.AnyScheduler::by_name(sched_name)
   let res = @lib.replay(log, s)
-  let conflict = replay_conflict_hint(args.has("anki"), args.has("json"))
+  let conflict = replay_conflict_hint(args.flag("anki"), args.flag("json"))
   if conflict.length() > 0 {
     println(conflict)
   }
-  if args.has("anki") {
+  if args.flag("anki") {
     // Anki 文本导入格式（TSV）：File > Import 直接可用
     let states : Array[@lib.CardState] = []
     let ids : Array[String] = []
@@ -1111,7 +1128,7 @@ fn cmd_replay(args : Args) -> Int32 {
     println(@lib.export_anki_tsv(states, s.name()))
     return 0
   }
-  if args.has("json") {
+  if args.flag("json") {
     let ids : Array[String] = []
     for cid in res.final_states.keys() {
       ids.push(cid)
