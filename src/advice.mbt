@@ -88,13 +88,60 @@ pub fn AdviceRequest::default() -> AdviceRequest {
 // ---------------------------------------------------------------------------
 
 ///|
-/// 给定每日新卡数，跑一次模拟并返回最终积压。
+/// 给定每日新卡数，跑一次模拟并返回最终积压（**不限**运行时工作量）。
+///
+/// 这是库层老入口的构件；需要「撞预算就停下」时走 `probe_outcome`。
 fn probe_backlog(
   s : AnyScheduler,
   req : AdviceRequest,
   new_per_day : Int32,
 ) -> Int32 {
   simulate(s, req.to_config(new_per_day)).final_backlog
+}
+
+///|
+/// 带**运行时工作量预算**的单次探测。
+///
+/// 与 `simulate` / `simulate_with_budget` 的分层逐字对齐：这里不再自己数一遍
+/// 工作量，而是**复用**同一个判据（`Σ due_cards > work_limit` 即中止），
+/// 所以 `advice` 与 `simulate` 对同一份模拟给出同一个准入结论。
+///
+/// 为什么必须这样做（第十二轮审计，P2）：`f3f274c` 给 `simulate` 加的第四道
+/// 守卫只挂在 `cmd_simulate` 的调用点上，而 `advice` 的每一次探测**就是**
+/// `simulate` 本体，一次也没走那道预算。实测（native release）：
+///
+///     simulate --days 22361 --new-per-day 1 --review-limit 1  → exit 2，16.4 s
+///     advice   --days 22361              --review-limit 1  → exit 0，89.3 s
+///     advice   --days 28000              --review-limit 1  → exit 0，174.5 s
+///
+/// 同一份模拟在两个入口拿到相反的准入判定，第二个还比被拒的那个做得多。
+fn probe_outcome(
+  s : AnyScheduler,
+  req : AdviceRequest,
+  new_per_day : Int32,
+  work_limit : Int64,
+) -> SimOutcome {
+  simulate_with_budget(s, req.to_config(new_per_day), work_limit)
+}
+
+///|
+/// 探测被运行时工作量预算中止时的信息。
+///
+/// `new_per_day` 是**被中止的那一次探测**的每日新卡数（不是用户传的参数——
+/// `advice` 的 n 是搜索量）；`sim` 是那一天的运行时状态（与 `simulate` 的
+/// 中止信息同一形状，逐字段可复现）。
+#derive(Debug)
+pub(all) struct AdviceAbort {
+  new_per_day : Int32
+  sim : SimAbort
+}
+
+///|
+/// `load_advice_with_budget` 的结果：搜完，或某次探测撞上预算被中止。
+#derive(Debug)
+pub(all) enum AdviceOutcome {
+  AdviceCompleted(AdviceResult)
+  AdviceAborted(AdviceAbort)
 }
 
 ///|
@@ -149,7 +196,16 @@ pub fn probe_final_backlog(
 ///
 /// **可复现承诺**：同样输入（含种子）永远给同样输出——模拟器确定性
 /// 传递到这一层。测试 `advice_deterministic` 锁定。
-pub fn load_advice(s : AnyScheduler, req : AdviceRequest) -> AdviceResult {
+///
+/// **运行时工作量预算**（第十二轮审计，P2）：每次探测都走
+/// `simulate_with_budget`，与 `simulate` 的第四道守卫**同一个判据**。
+/// 撞上预算时不再静默跑完，而是中止并如实报告是哪一次探测、哪一天、
+/// 累计了多少条——CLI 把它转成 exit 2。
+pub fn load_advice_with_budget(
+  s : AnyScheduler,
+  req : AdviceRequest,
+  work_limit : Int64,
+) -> AdviceOutcome {
   let hi = if req.review_limit > 0 { req.review_limit } else { 500 }
   // **负目标按无效输入处理**（RJ-A5，2026-11-10 审计）：模拟器从空状态
   // 开始、积压恒 ≥ 0，"目标 -1" 永远不可能达到，旧实现于是把 0 积压的
@@ -157,36 +213,50 @@ pub fn load_advice(s : AnyScheduler, req : AdviceRequest) -> AdviceResult {
   // CLI 早已守卫 target ≥ 0（main.mbt），但库级入口直接可达，且 API.md
   // §5.1 承诺过「三个诚实分支」——这里如实拒绝，不编造结论。
   if req.target_backlog < 0 {
-    let sim = simulate(s, req.to_config(0))
-    return {
+    let sim = match probe_outcome(s, req, 0, work_limit) {
+      Completed(r) => r
+      Aborted(a) => return AdviceAborted({ new_per_day: 0, sim: a, })
+    }
+    return AdviceCompleted({
       new_per_day: 0,
       simulation: sim,
-      final_backlog: probe_backlog(s, req, 0),
+      final_backlog: sim.final_backlog,
       next_step_backlog: None,
       search_lo: 0,
       search_hi: hi,
       summary: "目标积压 \{req.target_backlog} 无效：积压不可能为负。请传 >= 0 的目标（0 = 清空）。",
-    }
+    })
   }
   // 边界检查：0 张新卡能否达标
-  let lo_backlog = probe_backlog(s, req, 0)
+  //
+  // 注意这里**一次探测同时产出 backlog 与 simulation**：模拟器是确定性的，
+  // 同一配置再跑一遍逐字段相同，旧实现为了填 `simulation` 又跑了一遍，
+  // 等于把每个返回分支的成本翻倍（`advice --days 248 --review-limit 200`
+  // 实测 246 s 里有一半是这个重复）。现在只跑一次。
+  let lo_sim = match probe_outcome(s, req, 0, work_limit) {
+    Completed(r) => r
+    Aborted(a) => return AdviceAborted({ new_per_day: 0, sim: a, })
+  }
+  let lo_backlog = lo_sim.final_backlog
   if lo_backlog > req.target_backlog {
     // 存量积压连"停学新卡"都消化不了——如实说，建议为 0
-    let sim = simulate(s, req.to_config(0))
-    return {
+    return AdviceCompleted({
       new_per_day: 0,
-      simulation: sim,
+      simulation: lo_sim,
       final_backlog: lo_backlog,
       next_step_backlog: None,
       search_lo: 0,
       search_hi: hi,
       summary: "即使每天 0 张新卡，\{req.days} 天后仍有 \{lo_backlog} 张积压（目标 \{req.target_backlog}）——存量太大，先提高复习上限或延长窗口",
-    }
+    })
   }
   // 先看上界本身是否达标：达标则直接返回上界（不用搜）
-  let hi_backlog = probe_backlog(s, req, hi)
+  let hi_sim = match probe_outcome(s, req, hi, work_limit) {
+    Completed(r) => r
+    Aborted(a) => return AdviceAborted({ new_per_day: hi, sim: a, })
+  }
+  let hi_backlog = hi_sim.final_backlog
   if hi_backlog <= req.target_backlog {
-    let sim = simulate(s, req.to_config(hi))
     // `hi` 有两种来源，文案必须如实区分（R-7，2026-11-12 审计）：
     //   - `req.review_limit > 0`：hi 就是用户的复习上限，说「复习上限」、
     //     建议「调大 review_limit」都是对的。
@@ -205,26 +275,29 @@ pub fn load_advice(s : AnyScheduler, req : AdviceRequest) -> AdviceResult {
     } else {
       "复习上限已是不限（0），只能缩短窗口或降低每日新卡节奏；\{hi} 只是搜索上界，真实容量它没有测到"
     }
-    return {
+    return AdviceCompleted({
       new_per_day: hi,
-      simulation: sim,
+      simulation: hi_sim,
       final_backlog: hi_backlog,
       next_step_backlog: None,
       search_lo: hi,
       search_hi: hi,
       summary: "\{req.days} 天窗口内即使每天 \{bound_text}，积压也只有 \{hi_backlog}（目标 \{req.target_backlog}）——容量绰绰有余，\{tail_text}",
-    }
+    })
   }
   // 线性扫描：hi 已确认超标，从 hi-1 往下找第一个达标点。
   // `next_backlog` 始终保存「上一个（更大的）n」的积压，即 f(candidate+1)。
   let mut candidate = hi - 1
   let mut next_backlog = hi_backlog
   while candidate > 0 {
-    let backlog = probe_backlog(s, req, candidate)
+    let sim = match probe_outcome(s, req, candidate, work_limit) {
+      Completed(r) => r
+      Aborted(a) => return AdviceAborted({ new_per_day: candidate, sim: a, })
+    }
+    let backlog = sim.final_backlog
     if backlog <= req.target_backlog {
       // 更大的 n 全部已实测超标，所以这就是真实最大值
-      let sim = simulate(s, req.to_config(candidate))
-      return {
+      return AdviceCompleted({
         new_per_day: candidate,
         simulation: sim,
         final_backlog: backlog,
@@ -232,20 +305,50 @@ pub fn load_advice(s : AnyScheduler, req : AdviceRequest) -> AdviceResult {
         search_lo: 0,
         search_hi: hi,
         summary: "每天 \{candidate} 张新卡可在 \{req.days} 天内把积压控制在 \{backlog}（目标 \{req.target_backlog}）；第 \{candidate + 1} 张会升到 \{next_backlog}",
-      }
+      })
     }
     next_backlog = backlog
     candidate = candidate - 1
   }
   // 走到这里：f(0) 达标（入口已验证），f(1)（= next_backlog）超标
-  let sim = simulate(s, req.to_config(0))
-  {
+  AdviceCompleted({
     new_per_day: 0,
-    simulation: sim,
+    simulation: lo_sim,
     final_backlog: lo_backlog,
     next_step_backlog: Some(next_backlog),
     search_lo: 0,
     search_hi: hi,
     summary: "每天最多 0 张新卡：多学 1 张就会让积压（\{next_backlog}）超过目标 \{req.target_backlog}",
+  })
+}
+
+///|
+/// 负载建议（**不限**运行时工作量）。
+///
+/// 等价于 `load_advice_with_budget(s, req, Int64.MAX)`——与
+/// `simulate` / `simulate_with` 同一分层：库层老入口保持原语义，
+/// 需要预算的调用方（CLI）走带预算的版本。
+///
+/// `work_limit` 取 `Int64.MAX` 时中止分支不可达（一次探测的累计到期条数
+/// 最多 `days × cards ≤ 1e5 × 1e5 = 1e10`）。这里仍返回一份空结果而不是
+/// 抛错，保持 `load_advice` 是全函数——与 `simulate_with` 的防御分支同形。
+pub fn load_advice(s : AnyScheduler, req : AdviceRequest) -> AdviceResult {
+  match load_advice_with_budget(s, req, 9223372036854775807L) {
+    AdviceCompleted(r) => r
+    AdviceAborted(_) =>
+      {
+        new_per_day: 0,
+        simulation: {
+          days: [],
+          total_reviews: 0,
+          max_backlog: 0,
+          final_backlog: 0,
+        },
+        final_backlog: 0,
+        next_step_backlog: None,
+        search_lo: 0,
+        search_hi: 0,
+        summary: "探测被运行时工作量预算中止（预算 = Int64.MAX 时不可达）",
+      }
   }
 }

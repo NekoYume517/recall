@@ -787,6 +787,34 @@ fn simulate_scan_error(days : Int32, new_per_day : Int32) -> String {
 }
 
 ///|
+/// `advice` 的探测被运行时工作量预算中止时的错误消息
+/// （第十二轮审计 P2：`advice` 的每一次探测就是一次 `simulate`，
+/// 必须与 `simulate` 的第四道守卫用同一个判据，而不是另写一套计数器）。
+///
+/// 两条建议都**可执行**，论证与 `simulate_budget_error` 逐字同源：
+///   - `--days` 降到中止那天之前：第 `abort.sim.day` 天之前的累计量必然
+///     ≤ 预算（预算是那一天才超的）；
+///   - `--review-limit 0`（不限）：积压不再增长时成本回归线性。
+///
+/// 与 `simulate_budget_error` 的差别只在措辞：这里被中止的是**搜索中的
+/// 一次探测**，所以必须报出「探测到多少张新卡时中止」——用户传的是
+/// `--days` / `--review-limit`，`new_per_day` 是搜索量，不能让他自己去找。
+fn advice_budget_error(
+  abort : @lib.AdviceAbort,
+  days : Int32,
+  review_limit : Int32,
+) -> String {
+  let head = "用法错误: advice 的探测被运行时工作量预算中止（累计到期条数上限 \{abort.sim.limit}，判据与墙钟无关）：探测 --new-per-day \{abort.new_per_day}（--days \{days}、--review-limit \{review_limit}）时，第 \{abort.sim.day + 1} 天已累计 \{abort.sim.work} 条，当天到期 \{abort.sim.due_cards} 张、积压 \{abort.sim.backlog} 张——这个窗口内的积压已无法被 --review-limit 消化，继续探测只会更慢"
+  if abort.sim.day >= 1 {
+    head +
+    "\n  建议: 把 --days 降到 \{abort.sim.day} 以内（第 \{abort.sim.day} 天之前的累计量在预算内）；或把 --review-limit 0（不限）——积压不再增长时成本回归线性"
+  } else {
+    head +
+    "\n  建议: 第 1 天就超预算，先把 --review-limit 调小一档再试，或把 --review-limit 0（不限）"
+  }
+}
+
+///|
 /// `simulate` 的**运行时工作预算**（2026-11-13 追加轮）。
 ///
 /// 前三道守卫（单轴 / 卡数乘积 / 扫描量）都是「启动时按三个参数算一个数」，
@@ -1856,7 +1884,16 @@ fn cmd_advice(args : Args) -> Int32 {
     seed,
     target_backlog,
   }
-  let r = @lib.load_advice(s, req)
+  // **第四道守卫（运行时工作量预算），与 simulate 同一个判据**
+  // （第十二轮审计 P2）：每次探测都走 `simulate_with_budget`，撞预算就中止并
+  // exit 2，而不是把同一份「simulate 会拒绝」的模拟跑完再给建议。
+  let r = match @lib.load_advice_with_budget(s, req, simulate_work_limit()) {
+    @lib.AdviceCompleted(r) => r
+    @lib.AdviceAborted(a) => {
+      println(advice_budget_error(a, days, review_limit))
+      return 2
+    }
+  }
   println("负载建议: " + s.name() + " / " + policy + " 策略")
   println(
     "参数: " +

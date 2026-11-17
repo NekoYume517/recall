@@ -478,9 +478,29 @@ pub(all) struct AdviceResult {
 
 pub fn AdviceRequest::default() -> AdviceRequest
 pub fn load_advice(s : AnyScheduler, req : AdviceRequest) -> AdviceResult
+/// **带运行时工作量预算**（第十二轮审计）：每次探测都走 `simulate_with_budget`，
+/// 与 `simulate` 的第四道守卫**同一个判据**。中止时返回 `AdviceAborted`。
+pub fn load_advice_with_budget(
+  s : AnyScheduler,
+  req : AdviceRequest,
+  work_limit : Int64,
+) -> AdviceOutcome
 pub fn AdviceRequest::to_config(self, new_per_day : Int32) -> SimConfig
 pub fn probe_final_backlog(s : AnyScheduler, req, new_per_day : Int32) -> Int32
+
+pub(all) struct AdviceAbort {
+  new_per_day : Int32     // **被中止的那一次探测**的每日新卡数（搜索量，不是用户参数）
+  sim : SimAbort          // 那一天的运行时状态（与 simulate 的中止信息同一形状）
+}
+pub(all) enum AdviceOutcome {
+  AdviceCompleted(AdviceResult)
+  AdviceAborted(AdviceAbort)
+}
 ```
+
+`load_advice` 等价于 `load_advice_with_budget(s, req, Int64.MAX)`——与
+`simulate` / `simulate_with`、`simulate_with_budget` 同一分层：库层老入口保持
+「不限预算」，需要预算的调用方（CLI）走带预算的版本。
 
 方法：**模拟搜索（从上界向下逐点扫描）**，不是解析解——积压动力学非线性
 （Again → 间隔回退 → 更多到期 → 评分策略感知逾期更悲观），解析近似会漏掉
@@ -580,8 +600,21 @@ CLI 是显式调用、结果逐字节可复现，秒级到两分钟的等待是�
 ```
 
 库层 `simulate_with_budget` 接收预算参数，`simulate` / `simulate_with` 仍是
-「不限预算」，所以 `advice` 的探测路径完全不受影响（它有自己的成本守卫，
-下面那段）。
+「不限预算」。
+
+**`advice` 的探测路径用的是同一个判据**（第十二轮审计，P2）。修复前
+第四道守卫只挂在 `cmd_simulate` 上，而 `advice` 的每一次探测**就是**一次
+`simulate`，一次也没走预算 —— 同一份模拟在两个入口得到相反的准入判定：
+
+| 命令 | 修复前 | 修复后 |
+|---|---|---|
+| `simulate --days 22361 --new-per-day 1 --review-limit 1` | exit 2，16.4 s | 不变 |
+| `advice --days 22361 --review-limit 1` | **exit 0，89.3 s** | exit 2，17.5 s |
+| `advice --days 28000 --review-limit 1` | **exit 0，174.5 s** | exit 2，14.5 s |
+| `advice --days 10954 --review-limit 1`（预算边界内侧） | exit 0 | exit 0，13.0 s |
+
+（本机 native release；中止点与 `simulate` 逐字段相同：第 10959 天 /
+`60008566` 条。判据与墙钟无关，秒数随机器变。）
 
 `advice` 的成本形状又是另一种：它是**探测次数 × 单次模拟**，最坏
 
@@ -600,9 +633,17 @@ CLI 是显式调用、结果逐字节可复现，秒级到两分钟的等待是�
 
 边界值本身合法（`> 2.5e9` 才拒）。`--review-limit 0`（不限）的语义不变：
 它只是让搜索上界 `hi` 取固定 500，与 `--review-limit 500` 同形。库层
-`load_advice` 不做这个守卫——纯计算函数，成本决策留给调用方，与
-`simulate` 的两道守卫（`total_cards_error` / `simulate_scan_error`）
-同一条分层。
+`load_advice` 不做这道**启动时**守卫——纯计算函数，成本决策留给调用方；
+`load_advice_with_budget` 只做**运行时工作量**那一层，与 `simulate`
+（`total_cards_error` / `simulate_scan_error` / `simulate_with_budget`）的分层
+一一对应。
+
+顺带一条实现事实（第十二轮）：每个返回分支以前会**把同一个配置再模拟一遍**
+去填 `simulation` 字段。模拟器是确定性的，那第二遍与第一遍逐字段相同，
+所以改成复用第一遍的结果——同一份 `advice --days 248 --review-limit 200`
+的成本因此减半（实测 246 s → 122 s 量级），输出不变（
+`cmd/recall/advice_budget_wbtest.mbt` 锁定 `load_advice_with_budget` 与
+`load_advice` 逐字段相同）。
 
 **拒绝消息必须能执行**（R-7 同族）：除了报出两轴与乘积，末尾还给按当前
 另一轴反算的可行值 —— 固定 `--review-limit` 时的 `--days` 上界
