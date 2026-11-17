@@ -27,6 +27,9 @@ struct Args {
   params : Map[String, String]
   /// `--flag` 形式（无值）
   flags : Map[String, Bool]
+  /// 不以 `--` 开头的裸 token（第十二轮审计：不再静默忽略，
+  /// 由 positional_args_error 统一报用法错误）
+  positionals : Array[String]
 }
 
 ///|
@@ -49,6 +52,7 @@ struct Args {
 fn parse_args(argv : Array[String]) -> Args {
   let params : Map[String, String] = Map([])
   let flags : Map[String, Bool] = Map([])
+  let positionals : Array[String] = []
   let mut i = 0
   while i < argv.length() {
     let tok = argv[i]
@@ -80,11 +84,16 @@ fn parse_args(argv : Array[String]) -> Args {
         i = i + 1
       }
     } else {
-      // 位置参数忽略（子命令已在 main 里取走）
+      // 裸 token（位置参数）**收下而不是丢掉**（第十二轮审计，P3）：
+      // 子命令本身已经在 main 里取走，所以进到这里的一定是多余的。旧实现
+      // 直接跳过，于是 `recall simulate 200` 跑默认 90 天并 exit 0——
+      // 与 N-5（未知键）/ 空值（--days=）/ 非法值（--days abc）/ flag 形态
+      // 四种「提供了但不对必须报错」的形态不一致。
+      positionals.push(tok)
       i = i + 1
     }
   }
-  { params, flags, }
+  { params, flags, positionals, }
 }
 
 ///|
@@ -463,8 +472,8 @@ fn usage_text() -> String {
     "  --json           以 JSON 输出 (仅 replay, 与 --anki 同给时被忽略)",
     "  --anki           以 Anki 文本导入格式(TSV)输出最终状态 (仅 replay, 优先于 --json)",
     "", "参数写法: --key value 与 --key=value 等价；--flag 表示布尔开",
-    "          同一参数重复给出时后者生效 (last-wins)", "", "退出码: 0 成功 / 1 数据错误 / 2 用法错误",
-    "",
+    "          同一参数重复给出时后者生效 (last-wins)", "          不以 -- 开头的裸参数会被拒绝（必须写成 --key value 或 --key=value）",
+    "", "退出码: 0 成功 / 1 数据错误 / 2 用法错误", "",
   ]
   let sb = StringBuilder()
   for line in lines {
@@ -2103,6 +2112,27 @@ fn flag_shaped_value_error(sub : String, args : Args) -> String {
   "用法错误: 参数 \{bad.join(", ")} 需要一个值（--key value 或 --key=value），不能只写键名"
 }
 
+///|
+/// 裸 token（位置参数）出现时的用法错误消息。合法返回空串。
+///
+/// 第十二轮审计（P3）：`recall simulate 200` 曾经静默跑默认 90 天并 exit 0。
+/// 已知的四种「提供了但不对」——未知键（N-5）、空值（`--days=`）、非法值
+/// （`--days abc`）、值形参数的 flag 形态——都报 exit 2，只有裸 token 是静默的。
+/// 用户拼错成 `days=10`（少两个减号）时拿到的是默认值的实验结果，退出码 0。
+///
+/// 注意：子命令本身是位置参数，但它在 `main` 里已经被取走，进到 `parse_args`
+/// 的全是多余的 token，所以这里对所有子命令一视同仁地拒绝。
+fn positional_args_error(sub : String, args : Args) -> String {
+  if args.positionals.length() == 0 {
+    return ""
+  }
+  let shown : Array[String] = []
+  for t in args.positionals {
+    shown.push("'" + t + "'")
+  }
+  "用法错误: \{sub} 不接受位置参数，多余的 \{shown.join(", ")}（参数一律写成 --key value 或 --key=value）"
+}
+
 // ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
@@ -2164,6 +2194,14 @@ fn main {
     "stats" => ["log"]
     "curve" => ["log", "buckets"]
     _ => []
+  }
+  // 裸 token（位置参数）：第五种「提供了但不对」的形态，必须报用法错误
+  // （第十二轮审计，P3）。子命令本身是位置参数、main 已取走，所以这里
+  // 剩下的全是多余的——`recall simulate 200` 以前跑默认 90 天并 exit 0。
+  let positional_err = positional_args_error(sub, args)
+  if positional_err.length() > 0 {
+    println(positional_err)
+    @sys.exit(2)
   }
   if allowed.length() > 0 {
     let unknown : Array[String] = []
