@@ -338,6 +338,20 @@ pub impl Scheduler for Leitner
 
 规则：答对进下一盒，答错回第 1 盒。
 
+**盒数只有一个来源**（2026-11-17 审计，P3）：`intervals` 与 `boxes` 都是
+`pub(all)` 字段，手工构造时可能不同步。`effective_boxes()` 取
+`min(boxes, intervals.length())`，`review` 的盒号夹取与 `interval_of` 的
+间隔查表**共用这一个上界**。修复前两处各用各的，`{ boxes: 10, intervals: [1.0] }`
+连续 Good 后得到 `difficulty = 6`（盒 6）而 `interval_days = 1.0`（盒 1 的间隔）
+——同一张卡两个字段自相矛盾（红灯实测 `box=6 interval=1`）。
+
+自定义盒表请用带校验的构造器，长度不匹配直接报错，不接受两套定义：
+
+```moonbit
+pub fn Leitner::with_intervals(boxes : Int32, intervals : Array[Double])
+  -> Result[Leitner, String]      // intervals.length() != boxes ⇒ Err（并复制输入）
+```
+
 ## 4. 重放引擎 `src/replay.mbt`
 
 ```moonbit

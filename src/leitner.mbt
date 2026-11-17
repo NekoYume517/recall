@@ -46,6 +46,31 @@ pub fn Leitner::new() -> Leitner {
 ///|
 /// 自定义盒数。`intervals` 按 2 的幂生成（1, 2, 4, 8, ...），
 /// 与默认表同构，方便做"更多盒子"的对比实验。
+/// 带校验的自定义盒表（第十二轮审计，P3）。
+///
+/// `Leitner` 是 `pub(all)`，两个字段可以被直接构造，所以「不同步」只能在
+/// **入口**显式拒绝：这里要求 `intervals.length() == boxes`——盒数只有一个
+/// 定义，不接受两套。输入数组会被复制（与 `Fsrs::with_params` 同一约定）。
+///
+/// 手工构造的不同步实例不会崩：`effective_boxes()` 取两者较小值兜底，
+/// 于是它退化成「一致的最小盒数」，而不是两个字段自相矛盾。
+pub fn Leitner::with_intervals(
+  boxes : Int32,
+  intervals : Array[Double],
+) -> Result[Leitner, String] {
+  let n = intervals.length()
+  if boxes < 1 {
+    return Err("boxes 必须 >= 1，得到 \{boxes}")
+  }
+  if n != boxes {
+    return Err(
+      "intervals 的长度必须等于 boxes（\{boxes}），得到 \{n}",
+    )
+  }
+  Ok({ boxes, intervals: intervals.copy(), })
+}
+
+///|
 pub fn Leitner::with_boxes(boxes : Int32) -> Leitner {
   let n = if boxes < 1 { 1 } else if boxes > 20 { 20 } else { boxes }
   let table : Array[Double] = []
@@ -57,7 +82,7 @@ pub fn Leitner::with_boxes(boxes : Int32) -> Leitner {
 
 ///|
 /// 盒号（1-based）→ 间隔天数。
-/// 越界的盒号夹到 [1, boxes]，再按 `intervals` 长度兜底。
+/// 越界的盒号夹到 [1, effective_boxes()]（`boxes` 与 `intervals` 长度的较小者）。
 ///
 /// **上限夹取（RC-2，2026-10-27）**：结果同样夹到 `max_interval_days()`
 /// （100 年）。Leitner 借 `CardState.interval_days` 表达盒间隔，与
@@ -73,12 +98,23 @@ pub fn Leitner::with_boxes(boxes : Int32) -> Leitner {
 /// 后果是 compare 的 total_interval、stats 的 mean/max_interval、
 /// export_anki_tsv 的 interval_days 列、retrievability 的分母全部失真，
 /// 且没有任何告警。
-fn Leitner::interval_of(self : Leitner, box : Int32) -> Double {
-  let last = if self.intervals.length() == 0 {
-    return 1.0
+fn Leitner::effective_boxes(self : Leitner) -> Int32 {
+  let n = self.intervals.length()
+  if n < 1 {
+    1
+  } else if self.boxes < 1 {
+    1
+  } else if self.boxes > n {
+    n
   } else {
-    self.intervals.length()
+    self.boxes
   }
+}
+
+///|
+/// 盒号（1-based）→ 间隔天数。
+fn Leitner::interval_of(self : Leitner, box : Int32) -> Double {
+  let last = self.effective_boxes()
   let b = if box < 1 { 1 } else if box > last { last } else { box }
   let raw = self.intervals[b - 1]
   // 与 sm2_next_interval / fsrs interval_days 同法：源头夹到
@@ -140,10 +176,14 @@ pub impl Scheduler for Leitner with fn init(self, card_id, now) {
 pub impl Scheduler for Leitner with fn review(self, state, grade, now) {
   let prev_box = leitner_box_of(state)
   let pass = is_recalled(grade)
+  // 盒号上界与 `interval_of` 用**同一个**来源（`effective_boxes`）。修复前这里
+  // 用 `self.boxes`、`interval_of` 用 `intervals.length()`，手工构造的不同步
+  // 实例会得到「盒 10 但间隔 1 天」这种自相矛盾的卡（第十二轮审计，P3）。
+  let boxes = self.effective_boxes()
   let box = if !pass {
     1
-  } else if prev_box >= self.boxes {
-    self.boxes
+  } else if prev_box >= boxes {
+    boxes
   } else {
     prev_box + 1
   }
