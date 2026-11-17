@@ -361,6 +361,26 @@ fn fmt_pct(x : Double) -> String {
 }
 
 ///|
+/// **JSON 数字**格式化：非有限值写成 `null`，其余照 `fmt_float`。
+///
+/// 为什么必须单独一个出口（第十二轮审计，P2）：`fmt_float` 对非有限值的兜底
+/// 是 `Double::to_string`，它给出 `Infinity` / `NaN` —— 这两个**不是 JSON
+/// 字面量**。`recall replay --json` 的字段曾经因此产出
+/// `"interval_error_days":Infinity`：退出码 0、机器读不了，而且是静默的。
+///
+/// 这是**通用的序列化层守卫**，不是给某一个字段打补丁：这条 JSON 里所有浮点
+/// 出口（`interval_error_days` 与 `final_intervals` 的每一项）都走它，将来
+/// 新增字段也走它。`null` 是 JSON 对「没有可用数值」的既定表达，且解析器与
+/// 调用方都能立刻分辨（比偷偷写成 0 或一个巨大值诚实）。
+fn fmt_json_number(x : Double, digits : Int32) -> String {
+  if x.is_nan() || x == 1.0 / 0.0 || x == -1.0 / 0.0 {
+    "null"
+  } else {
+    fmt_float(x, digits)
+  }
+}
+
+///|
 /// 左对齐、右侧补空格到 `width`。
 fn pad_right(s : String, width : Int32) -> String {
   let sb = StringBuilder()
@@ -1025,7 +1045,7 @@ fn cmd_replay(args : Args) -> Int32 {
     sb.write_string(",\"total_lapses\":")
     sb.write_string(res.total_lapses.to_string())
     sb.write_string(",\"interval_error_days\":")
-    sb.write_string(fmt_float(res.interval_error_days, 4))
+    sb.write_string(fmt_json_number(res.interval_error_days, 4))
     sb.write_string(",\"final_intervals\":{")
     let mut first = true
     for cid in ids {
@@ -1042,7 +1062,7 @@ fn cmd_replay(args : Args) -> Int32 {
       // 字符串自带引号，直接作为键写入。
       sb.write_string(Json::string(cid).stringify())
       sb.write_string(":")
-      sb.write_string(fmt_float(iv, 2))
+      sb.write_string(fmt_json_number(iv, 2))
     }
     sb.write_string("}}")
     println(sb.to_string())

@@ -44,7 +44,10 @@ pub fn[T : Scheduler] replay_with(log : ReviewLog, s : T) -> ReplayResult {
   card_ids.sort_by(fn(a, b) { a.lexical_compare(b) })
   let mut total_reviews = 0
   let mut total_lapses = 0
-  let mut error_sum = 0.0
+  // 均值用增量式（第十二轮审计，P2）：`elapsed_days` 只要有限就收，
+  // 于是 1e308 这类合法输入会把 `error_sum` 加成 +Inf，`interval_error_days`
+  // 变成 Infinity（CLI 打出来不是合法 JSON）。中间量恒落在 [0, max] 内。
+  let mut error_mean = 0.0
   let mut error_count = 0
   for cid in card_ids {
     let events = match grouped.get(cid) {
@@ -73,8 +76,10 @@ pub fn[T : Scheduler] replay_with(log : ReviewLog, s : T) -> ReplayResult {
       // 间隔偏差只在"有上次调度"时才有意义（首次没有上一个间隔）
       if has_prev && scheduled > 0.0 {
         let diff = actual - scheduled
-        error_sum = error_sum + (if diff < 0.0 { -diff } else { diff })
+        let abs_diff = if diff < 0.0 { -diff } else { diff }
         error_count = error_count + 1
+        error_mean = error_mean +
+          (abs_diff - error_mean) / error_count.to_double()
       }
       total_reviews = total_reviews + 1
       if ev.grade == Again {
@@ -94,7 +99,7 @@ pub fn[T : Scheduler] replay_with(log : ReviewLog, s : T) -> ReplayResult {
     interval_error_days: if error_count == 0 {
       0.0
     } else {
-      error_sum / error_count.to_double()
+      error_mean
     },
   }
 }

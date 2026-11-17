@@ -44,6 +44,15 @@ fn review_interval(ev : ReviewEvent, previous : Timestamp?) -> Double? {
 
 ///|
 /// 计算每张卡的统计。返回按 card_id 升序排列的数组，保证可复现。
+///
+/// **均值用增量式，不用「求和后相除」**（第十二轮审计，P2）：`elapsed_days`
+/// 只要求有限（`log.mbt` 的 `field_double`），于是 `1e308` 这种合法输入会让
+/// `interval_sum + iv` 越过 Double 上界变成 `+Inf`——均值因此大于最大值
+/// （数学上不可能），CLI 打出 `均间隔 Infinity / 最大间隔 1e+308`，
+/// `replay --json` 的同类字段直接产出 `Infinity`（不是合法 JSON）。
+///
+/// 增量均值 `mean += (x - mean) / n` 的中间量恒落在 `[0, max(x)]` 内，不溢出；
+/// 对可精确表示的小样本与「求和后相除」逐位相同（回归用例锁定）。
 pub fn compute_stats(log : ReviewLog) -> Array[CardStats] {
   let grouped = log.by_card()
   let ids : Array[String] = []
@@ -60,7 +69,7 @@ pub fn compute_stats(log : ReviewLog) -> Array[CardStats] {
     let mut reviews = 0
     let mut lapses = 0
     let mut passes = 0
-    let mut interval_sum = 0.0
+    let mut interval_mean = 0.0
     let mut interval_max = 0.0
     let mut previous : Timestamp? = None
     let mut samples = 0
@@ -75,7 +84,8 @@ pub fn compute_stats(log : ReviewLog) -> Array[CardStats] {
       match review_interval(ev, previous) {
         Some(iv) => {
           samples = samples + 1
-          interval_sum = interval_sum + iv
+          interval_mean = interval_mean +
+            (iv - interval_mean) / samples.to_double()
           if iv > interval_max {
             interval_max = iv
           }
@@ -88,10 +98,14 @@ pub fn compute_stats(log : ReviewLog) -> Array[CardStats] {
       card_id: cid,
       reviews,
       lapses,
+      // 均值数学上不可能超过最大值，只可能在末位舍入上越界；夹一下让
+      // 「mean <= max」成为恒真断言（正常样本上是恒等变换）。
       mean_interval: if samples == 0 {
         0.0
+      } else if interval_mean > interval_max {
+        interval_max
       } else {
-        interval_sum / samples.to_double()
+        interval_mean
       },
       max_interval: interval_max,
       retention_rate: if reviews == 0 {
@@ -235,17 +249,22 @@ pub(all) struct OverallStats {
 /// 从 `compute_stats` 生成的卡片统计聚合整体指标。
 /// 有样本卡片判据为 reviews > 1 或 mean_interval > 0；空样本整体均值为 0。
 /// 若自行构造 CardStats，应保留相同的计数与间隔约定。
+///
+/// 均值同样是**增量式**（第十二轮审计，P2）：每卡的 `mean_interval` 都可能
+/// 接近 Double 上界（有限输入就能到 `1e308`），求和会把整体均值加成
+/// `Infinity`——与 `compute_stats` 同一条修复、同一个理由。
 pub fn overall_stats(rows : Array[CardStats]) -> OverallStats {
   let mut reviews = 0
   let mut lapses = 0
-  let mut interval_sum = 0.0
+  let mut interval_mean = 0.0
   let mut interval_n = 0
   for r in rows {
     reviews = reviews + r.reviews
     lapses = lapses + r.lapses
     if r.reviews > 1 || r.mean_interval > 0.0 {
-      interval_sum = interval_sum + r.mean_interval
       interval_n = interval_n + 1
+      interval_mean = interval_mean +
+        (r.mean_interval - interval_mean) / interval_n.to_double()
     }
   }
   {
@@ -260,7 +279,7 @@ pub fn overall_stats(rows : Array[CardStats]) -> OverallStats {
     mean_interval: if interval_n == 0 {
       0.0
     } else {
-      interval_sum / interval_n.to_double()
+      interval_mean
     },
   }
 }

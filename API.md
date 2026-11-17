@@ -753,6 +753,20 @@ pub fn retention_curve(
 无法表示非退化的等宽桶；`retention_curve` 返回单个 `[0, max_elapsed]` 桶，
 而不是把桶宽擅自改成 1 天。
 
+**均值不溢出不变量**（2026-11-17 审计）：`elapsed_days` 只被要求**有限**
+（§2），所以 `1e308` 这种合法输入可以合法地进入统计。`compute_stats` /
+`overall_stats` / `replay` 的均值一律用**增量式** `mean += (x − mean)/n`
+（而不是「求和后相除」），因此
+
+```
+CardStats.mean_interval <= CardStats.max_interval      （任意合法日志恒成立）
+OverallStats.mean_interval <= 各卡 mean_interval 的最大值
+```
+
+修复前 `1e308 + 1e308` 越过 Double 上界变成 `+Inf`，于是 `stats` 打出
+`均间隔 Infinity / 最大间隔 1e+308`（均值大于最大值），`replay --json` 的
+`interval_error_days` 直接产出 `Infinity`（不是 JSON）。
+
 ## 7. CLI `cmd/recall/main.mbt`
 
 ```
@@ -765,6 +779,11 @@ recall curve    --log <file.jsonl> --buckets 10
 ```
 
 退出码：0 成功，1 数据错误，2 用法错误。
+
+`--json` 输出（`replay`）里的**每个浮点字段**都走 `fmt_json_number`：非有限值
+写成 `null`（JSON 没有 `Infinity` / `NaN` 字面量），有限值照定点/指数输出。
+因此「输出可以被任何 JSON 解析器读」是一条可断言的契约
+（`cmd/recall/json_number_guard_wbtest.mbt` 锁定）。
 
 ## 8. 测试要求
 
