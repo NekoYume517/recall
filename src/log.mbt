@@ -26,10 +26,10 @@ pub(all) struct ReviewEvent {
   ///
   /// 调度语义仍由 grade 枚举驱动（1 与 2 的调度行为相同，这是 FSRS/SM-2
   /// 的定义）；grade_raw 只为**日志保真**服务：from_jsonl 记录原文，
-  /// to_jsonl 写回原文，ReviewLog::from_jsonl(to_jsonl(log)) 逐字节
-  /// 恒等。非 JSONL 路径（
-  /// new 构造）取 grade.to_int() 代表值 ——
-  /// 那些调用点本来就没有「原文」可保。
+  /// to_jsonl 在 JSON 精确整数域内写回原文，ReviewLog::from_jsonl(to_jsonl(log))
+  /// 逐字节恒等。非 JSONL 路径（new 构造）取 grade.to_int() 代表值 ——
+  /// 那些调用点本来就没有「原文」可保；公开构造给出超精确域的 raw 时也在
+  /// 写出口取代表值，避免生成读入口拒收的 Double 舍入值。
   ///
   /// RJ-1b（2026-11-08 审计）：Int32 承载不了超域原文（2500000000 饱和成
   /// 2147483647，首次往返即非恒等），扩为 Int64 —— JSON 数字是 Double，
@@ -108,8 +108,8 @@ pub fn ReviewEvent::new(
 /// 带原始评分整数的构造：**JSONL 解析专用**（RJ-R）。
 ///
 /// grade 仍经 Grade::from_int 归一化供调度使用；grade_raw 保存
-/// JSON 里的原始整数（0..5 及夹到两端的越界值），to_jsonl 原样写回。
-/// 这是「无损日志」承诺的实现落点。
+/// JSON 里的原始整数（0..5 及夹到两端的越界值），to_jsonl 在 [-2^53, 2^53]
+/// 内原样写回。超精确域的直构值在写出口改用 grade 代表值，保证可读回。
 pub fn ReviewEvent::new_with_raw(
   card_id : String,
   reviewed_at : Timestamp,
@@ -260,6 +260,18 @@ fn json_elapsed_days(v : Double) -> Double {
 }
 
 ///|
+/// grade_raw 的写出口守卫。JSON 数字经 Double 承载，只有 [-2^53, 2^53]
+/// 内的整数能精确往返；越域值改用该事件归一化评分的代表值，保证输出仍能被
+/// from_jsonl 读回，且不伪造一个看似保留原文、实际已舍入的大整数。
+fn json_grade_raw(ev : ReviewEvent) -> Int64 {
+  if ev.grade_raw >= -9007199254740992L && ev.grade_raw <= 9007199254740992L {
+    ev.grade_raw
+  } else {
+    ev.grade.to_int().to_int64()
+  }
+}
+
+///|
 /// 单条事件 → JSON 对象。字段顺序即输出顺序。
 fn event_to_json(ev : ReviewEvent) -> Json {
   let m : Map[String, Json] = Map([])
@@ -268,7 +280,7 @@ fn event_to_json(ev : ReviewEvent) -> Json {
   m[key_due_at()] = Json::number(ev.due_at.to_double())
   // **无损写回**（RJ-R）：写原始评分整数而不是枚举代表值 —— 原文 1/4
   // 不再变成 2/5。grade_raw 由 from_jsonl 记录、new 构造时取代表值。
-  m[key_grade()] = Json::number(ev.grade_raw.to_double())
+  m[key_grade()] = Json::number(json_grade_raw(ev).to_double())
   m[key_elapsed_days()] = Json::number(json_elapsed_days(ev.elapsed_days))
   Json::object(m)
 }

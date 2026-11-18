@@ -146,6 +146,11 @@ JSON 原文（round 后的整数），to_jsonl 原样写回。因此：
 JSONL 读入口的规范化一致，避免 `to_jsonl → from_jsonl` 把负值改成 0 的往返漂移
 （`src/log_negative_elapsed_serialization_regression_test.mbt` 锁定）。
 
+`grade_raw` 的写出口同样受 JSON 精确整数域约束：公开构造器或 `pub(all)` 字段给出
+`|grade_raw| > 2^53` 时，改用 `grade` 的代表分（0/2/3/5），避免 Double 舍入后写出自家
+读入口拒收的大整数；`[-2^53, 2^53]` 内仍逐字节保留原文
+（`src/log_wide_grade_serialization_regression_test.mbt` 锁定）。
+
 ## 3. 调度器接口 `src/scheduler.mbt`
 
 ```moonbit
