@@ -250,7 +250,9 @@ pub fn ReviewLog::card_ids(self : ReviewLog) -> Array[String] {
 /// 绕过构造器（DISCIPLINE §5.4），只有出口能覆盖全部事件——与
 /// `fmt_json_number`（CLI 的 JSON 出口守卫）是同一条修法在另一层的落地。
 fn json_elapsed_days(v : Double) -> Double {
-  if is_finite(v) {
+  // 与两个公开构造器、JSONL 读入口保持同一规范化：负值和非有限值都落 0。
+  // ReviewEvent 是 pub(all)，直构负值不能绕过写出口后再读成另一个事件。
+  if is_finite(v) && v >= 0.0 {
     v
   } else {
     0.0

@@ -142,6 +142,9 @@ JSON 原文（round 后的整数），to_jsonl 原样写回。因此：
 `elapsed_days` 一律落 **0**——下游对「非有限」与「0」的判定完全一致
 （`elapsed_days > 0.0` 才采用字面值，否则按时间戳回推），因此语义零变化、
 输出恒可被 `from_jsonl` 读回（`src/log_nonfinite_elapsed_serialization_regression_test.mbt` 锁定）。
+2026-11-19 同族补全：`pub(all)` 直构的**负值**也在写出口落 0，与两个构造器和
+JSONL 读入口的规范化一致，避免 `to_jsonl → from_jsonl` 把负值改成 0 的往返漂移
+（`src/log_negative_elapsed_serialization_regression_test.mbt` 锁定）。
 
 ## 3. 调度器接口 `src/scheduler.mbt`
 
