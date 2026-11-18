@@ -74,6 +74,13 @@ fn parse_args(argv : Array[String]) -> Args {
       // --- 等号形式：按第一个 '=' 切成 key=value ---
       match body.find("=") {
         Some(eq) => {
+          if eq == 0 {
+            // `--=value` 与单独 `--` 一样没有参数名；保留原 token 供位置
+            // 参数诊断展示，不能写入 params[""] 后打印空白“未知参数”。
+            positionals.push(tok)
+            i = i + 1
+            continue
+          }
           let key = body.substring(start=0, end=eq)
           let value = body.substring(start=eq + 1, end=body.length())
           // 空值也写入 params（值为空串），让调用方有机会报「提供了但非法」；
