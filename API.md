@@ -351,9 +351,9 @@ pub impl Scheduler for Fsrs
 要求：**公式必须逐项可核对**，每一项注释对应的 w 下标。
 
 **`rating` 的定义域只有一处**（2026-11-17 第十三轮审计，P3）：FSRS 的评分刻度
-是 `1..4`，四个接收 `rating` 的公开公式入口（`initial_stability` /
-`initial_difficulty` / `next_difficulty` / `success_chain`）一律经 `clamp_rating`
-夹到该区间，越界值按最近的端点处理。修复前只夹了前两个，于是
+是 `1..4`，接收 `rating` 的公开公式入口（`initial_stability` /
+`initial_difficulty` / `next_difficulty` / `success_chain` / `step`）一律经
+`clamp_rating` 夹到该区间，越界值按最近的端点处理。修复前只夹了前两个，于是
 `next_difficulty(w, 5.0, 0) = 7.4146…`（按 g=0 算）而 `(w, 5.0, 1) = 6.6070…`
 ——同一张卡的「初始难度」按 Again 算、「难度推进」按域外形参算。调度器路径
 不可达（`fsrs_rating` 只产出 1..4，夹取是恒等变换），库级直接调用可达。

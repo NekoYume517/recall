@@ -535,6 +535,9 @@ pub fn step(
   rating : Int32,
   is_first : Bool,
 ) -> (Double, Double, Double) {
+  // step 本身也是公开公式入口：S 的同日/成功/遗忘分支都直接使用 rating，
+  // 不能只依赖 next_difficulty 内部的夹取，否则同一次推进的 S 与 D 口径不同。
+  let rating = clamp_rating(rating)
   if is_first || s <= 0.0 {
     let s0 = initial_stability(w, rating)
     let d0 = initial_difficulty(w, rating)
