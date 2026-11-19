@@ -32,10 +32,11 @@ pub(all) struct CardStats {
 
 ///|
 /// 全项目统计共用的间隔口径。日志开始可能晚于卡片首次学习，
-/// 所以首条事件的显式正间隔有效；否则只能从同卡前驱回推。
+/// 所以首条事件的显式有限正间隔有效；否则只能从同卡前驱回推。
+/// NaN / +Infinity 与构造器及 JSONL 写出口的 0 值同口径。
 /// 同一时刻的重复复习返回 Some(0)，与没有前驱的 None 区分。
 fn review_interval(ev : ReviewEvent, previous : Timestamp?) -> Double? {
-  if ev.elapsed_days > 0.0 {
+  if ev.elapsed_days > 0.0 && ev.elapsed_days != 1.0 / 0.0 {
     Some(ev.elapsed_days)
   } else {
     previous.map(fn(ts) { days_between(ts, ev.reviewed_at) })
