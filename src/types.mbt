@@ -274,6 +274,17 @@ pub fn CardState::overdue_days(self : CardState, now : Timestamp) -> Double {
 }
 
 ///|
+/// 复习计数递增。公开 CardState 允许调用方恢复任意持久化状态；计数抵达
+/// Int32.MAX 后饱和，避免再加一就不是「次数」而变成负数。
+fn increment_review_counter(n : Int32) -> Int32 {
+  if n == 2147483647 {
+    n
+  } else {
+    n + 1
+  }
+}
+
+///|
 /// 状态相等（CardState 只有 derive(Debug)，逐字段手写比较）。
 /// 浮点用精确比较：状态由确定性算法产生，不需要容差。
 pub fn CardState::equal(a : CardState, b : CardState) -> Bool {

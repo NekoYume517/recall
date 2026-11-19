@@ -204,8 +204,16 @@ pub impl Scheduler for Leitner with fn review(self, state, grade, now) {
     prev_box + 1
   }
   let interval = self.interval_of(box)
-  let reps = if pass { state.reps + 1 } else { state.reps }
-  let lapses = if pass { state.lapses } else { state.lapses + 1 }
+  let reps = if pass {
+    increment_review_counter(state.reps)
+  } else {
+    state.reps
+  }
+  let lapses = if pass {
+    state.lapses
+  } else {
+    increment_review_counter(state.lapses)
+  }
   let phase = if !pass {
     if state.reps == 0 {
       Learning

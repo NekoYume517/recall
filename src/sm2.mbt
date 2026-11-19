@@ -206,8 +206,12 @@ pub impl Scheduler for Sm2 with fn review(self, state, grade, now) {
   // 2) 再更新 EF（每次复习都做，答错也做）
   let ease = sm2_next_ease(prev_ease, grade)
   // 3) 计数与阶段
-  let reps = if correct { state.reps + 1 } else { 0 }
-  let lapses = if correct { state.lapses } else { state.lapses + 1 }
+  let reps = if correct { increment_review_counter(state.reps) } else { 0 }
+  let lapses = if correct {
+    state.lapses
+  } else {
+    increment_review_counter(state.lapses)
+  }
   let phase = if !correct {
     Relearning
   } else if reps >= 3 {

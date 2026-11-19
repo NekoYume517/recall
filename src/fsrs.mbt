@@ -619,10 +619,10 @@ pub impl Scheduler for Fsrs with fn review(self, state, grade, now) {
     reps: if lapsed {
       state.reps
     } else {
-      state.reps + 1
+      increment_review_counter(state.reps)
     },
     lapses: if lapsed {
-      state.lapses + 1
+      increment_review_counter(state.lapses)
     } else {
       state.lapses
     },
