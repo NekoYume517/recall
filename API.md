@@ -58,7 +58,9 @@ SM-2 的 `repetitions` 是 SM-2 公式的一部分（`reps=0/1/2` 分别对应
 `interval=1/1/6`，之后才走 `round(prev × EF)`），所以 `Sm2::review`
 （`src/sm2.mbt`）在 `q < 3`（只有 Again）时把它归零——这就是「连续成功次数」
 而不是「累计成功次数」。**按「累计」使用 `reps` 的代码在 SM-2 上会恒得 0**，
-`lapses` 才是跨调度器一致的遗忘计数。
+`lapses` 才是跨调度器一致的遗忘计数。公开 `CardState` 的 `reps` / `lapses`
+抵达 `Int32.MAX` 后再次递增会饱和在该上限，不回绕成负数；SM-2 遗忘时
+`reps` 清零的算法语义不变（`src/scheduler_counter_overflow_regression_test.mbt` 锁定）。
 
 同一个字段三种语义，因此 `replay` 的表格、Anki 导出的 `reps` 列、
 `compare` 的逐卡数字**不能跨算法比较**（与 `difficulty` 的
@@ -140,7 +142,7 @@ JSON 原文（round 后的整数），to_jsonl 原样写回。因此：
 产出的是本仓库自己也读不回来的文件。现在 `event_to_json` 是全部事件的
 **序列化出口**（`ReviewEvent` 是 `pub(all)`，直构字段可绕过构造器），非有限
 `elapsed_days` 一律落 **0**——下游对「非有限」与「0」的判定完全一致
-（`elapsed_days > 0.0` 才采用字面值，否则按时间戳回推），因此语义零变化、
+（只采用有限 `elapsed_days > 0.0` 的字面值，否则按时间戳回推），因此语义零变化、
 输出恒可被 `from_jsonl` 读回（`src/log_nonfinite_elapsed_serialization_regression_test.mbt` 锁定）。
 2026-11-19 同族补全：`pub(all)` 直构的**负值**也在写出口落 0，与两个构造器和
 JSONL 读入口的规范化一致，避免 `to_jsonl → from_jsonl` 把负值改成 0 的往返漂移
@@ -150,6 +152,13 @@ JSONL 读入口的规范化一致，避免 `to_jsonl → from_jsonl` 把负值�
 `|grade_raw| > 2^53` 时，改用 `grade` 的代表分（0/2/3/5），避免 Double 舍入后写出自家
 读入口拒收的大整数；`[-2^53, 2^53]` 内仍逐字节保留原文
 （`src/log_wide_grade_serialization_regression_test.mbt` 锁定）。
+
+`reviewed_at` / `due_at` 的 JSONL 合法域与读入口一致：
+`[-62135596800, 253402300799]`（0001-01-01 至 9999-12-31）。该域内的整数都
+小于 2^53，合法 JSONL 的逐字节往返覆盖两个端点；`grade_raw` 的 ±2^53 边界也
+保持可读回。公开构造器与 `pub(all)` 字段虽能承载全域 Int64 时间戳，但超出上述
+年域的事件不属于可序列化 JSONL 的合法输入：写出口不静默夹改历史时间，读入口
+会按 `BadTimestamp` 拒收。Int64 全域仍可只用于内存调度与 ISO8601 工具。
 
 ## 3. 调度器接口 `src/scheduler.mbt`
 
@@ -831,8 +840,10 @@ pub fn retention_curve(
 ```
 
 `compute_stats` 与 `retention_curve` 按卡片分组并稳定按复习时间排序，
-共用同一个间隔口径：优先采用日志明确记录的正 `elapsed_days`，否则仅由同卡
-前驱回推。首条事件的正间隔可代表截断日志中的既有学习历史；首条零间隔
+共用同一个间隔口径：优先采用日志明确记录的有限正 `elapsed_days`，否则仅由同卡
+前驱回推；`NaN` / `+Infinity` 与 JSONL 写出口的 0 值同口径，内存事件与
+序列化读回保持一致（`src/stats_nonfinite_explicit_interval_regression_test.mbt` 锁定）。
+首条事件的正间隔可代表截断日志中的既有学习历史；首条零间隔
 没有前驱，不计入间隔样本。同刻重复复习的零间隔有效，全部样本为零时曲线
 返回一个 `[0, 0]` 的桶。返回值同时给出每个桶的上下界，调用方打印标签时
 必须按区间 `[lo, hi)` 呈现，不能只取上界写成 `< hi`（那会把边界样本

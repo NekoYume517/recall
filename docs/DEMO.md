@@ -22,11 +22,11 @@ moon version
 
 ```bash
 moon check
-moon test      # 618 个测试
+moon test      # 624 个测试
 moon build --target wasm
 ```
 
-预期：`Total tests: 618, passed: 618, failed: 0.`
+预期：`Total tests: 624, passed: 624, failed: 0.`
 
 > 这一行是**硬编码的期望值**：每加一条测试都要跟着改（2026-11-13 审计时它还停在
 > 482，比当时的 510 少 28 条——照着 DEMO 逐字比对会误判成回归；同日的追加轮补了
@@ -39,6 +39,8 @@ moon build --target wasm
 > （`next_difficulty` / `success_chain`）4、CLI 的 `--` 裸 token 3）。2026-11-19
 > 再补 9 条，改到 **618**：FSRS `step` 的 rating 夹取 2、负 `elapsed_days` 写出口 2、
 > CLI `--=value` 空参数名 3、超 JSON 精确整数域的 `grade_raw` 写出口 2。
+> 2026-11-20 再补 6 条，改到 **624**：stats 非有限显式间隔回推 2、
+> 三调度器复习计数上限 4。
 
 ## 二、核心产出：积压预测
 
