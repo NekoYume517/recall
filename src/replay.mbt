@@ -179,8 +179,8 @@ pub fn compare(
     per_card.push((cid, va, vb))
   }
   {
-    a_name: a.name(),
-    b_name: b.name(),
+    a_name: Scheduler::name(a),
+    b_name: Scheduler::name(b),
     a_total_interval: total_interval(ra),
     b_total_interval: total_interval(rb),
     a_lapses: scheduler_lapses(ra),

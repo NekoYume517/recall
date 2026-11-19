@@ -249,5 +249,5 @@ pub fn export_anki_from_log(log : ReviewLog, s : AnyScheduler) -> String {
       None => ()
     }
   }
-  export_anki_tsv(states, s.name())
+  export_anki_tsv(states, Scheduler::name(s))
 }
