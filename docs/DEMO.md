@@ -22,11 +22,11 @@ moon version
 
 ```bash
 moon check
-moon test      # 624 个测试
+moon test      # 636 个测试
 moon build --target wasm
 ```
 
-预期：`Total tests: 624, passed: 624, failed: 0.`
+预期：`Total tests: 636, passed: 636, failed: 0.`
 
 > 这一行是**硬编码的期望值**：每加一条测试都要跟着改（2026-11-13 审计时它还停在
 > 482，比当时的 510 少 28 条——照着 DEMO 逐字比对会误判成回归；同日的追加轮补了
@@ -40,7 +40,10 @@ moon build --target wasm
 > 再补 9 条，改到 **618**：FSRS `step` 的 rating 夹取 2、负 `elapsed_days` 写出口 2、
 > CLI `--=value` 空参数名 3、超 JSON 精确整数域的 `grade_raw` 写出口 2。
 > 2026-11-20 再补 6 条，改到 **624**：stats 非有限显式间隔回推 2、
-> 三调度器复习计数上限 4。
+> 三调度器复习计数上限 4。2026-11-21 日常维护再补 12 条，改到 **636**：
+> replay 非有限显式间隔 2、advice `desired_retention` 3（含四入口逐卡到期日
+> 矩阵 1）、SM-2 `reps` 饱和分支 1、`--days 0` 库层 2 + CLI 2、
+> `retention_curve` O(1) 归桶边界 2。
 
 ## 二、核心产出：积压预测
 
