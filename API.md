@@ -869,6 +869,15 @@ pub fn retention_curve(
 无法表示非退化的等宽桶；`retention_curve` 返回单个 `[0, max_elapsed]` 桶，
 而不是把桶宽擅自改成 1 天。
 
+**归桶成本与桶数无关**（2026-11-21 审计）：归桶用「除法起点 + 与标签同源的
+`width * k` 乘法校正」直接定位，语义仍是「最大 k 使 `iv >= width*k`」
+（RC-8 的桶沿反例不变，`src/stats_bucket_edge_regression_test.mbt` 583 组
+穷举 + `src/curve_bucket_index_regression_test.mbt` 边界锁）。旧实现从
+`bi = 0` 线性上扫，最坏 `samples × buckets`：1e5 事件日志上
+`--buckets 10000` 比 `--buckets 100` 多约 **0.62 s**（1376 ms vs 760 ms，
+native release）；现在是同量级（547–882 ms，主项为 JSONL 解析）。
+实测见 `audit/2026-11-21/recall/evidence/curve-buckets-bench.log`。
+
 **均值不溢出不变量**（2026-11-17 审计）：`elapsed_days` 只被要求**有限**
 （§2），所以 `1e308` 这种合法输入可以合法地进入统计。`compute_stats` /
 `overall_stats` / `replay` 的均值一律用**增量式** `mean += (x − mean)/n`

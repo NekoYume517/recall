@@ -207,7 +207,23 @@ pub fn retention_curve(
     //
     // 语义：找最大的 k 使 `iv >= width*k`（等价于 `k = ceil(iv/width)-1`），
     // 再封顶到最后一桶（iv == max_elapsed 时落在末桶，末桶是闭区间）。
-    let mut bi = 0
+    //
+    // 归桶改为 **O(1)**（2026-11-21 审计，#6）：旧实现从 `bi = 0` 线性上扫，
+    // 最坏 `samples × buckets` 次比较（1e5 样本 × 1e4 桶 = 1e9 次，实测
+    // 比 100 桶多花约 0.7 s）。除法只当**起点**，不参与判定——RC-8 的
+    // 桶沿反例（`iv = width*3` 却算出 2.999…）仍由下面两个乘法校正循环
+    // 兜住，最终落桶与标签逐位同源。
+    let ratio = iv / safe_width
+    let mut bi = if ratio >= n_buckets.to_double() {
+      n_buckets - 1
+    } else if ratio <= 0.0 {
+      0
+    } else {
+      ratio.to_int()
+    }
+    while bi > 0 && iv < safe_width * bi.to_double() {
+      bi = bi - 1
+    }
     while bi + 1 < n_buckets && iv >= safe_width * (bi + 1).to_double() {
       bi = bi + 1
     }
