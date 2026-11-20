@@ -873,6 +873,13 @@ OverallStats.mean_interval <= 各卡 mean_interval 的最大值
 `均间隔 Infinity / 最大间隔 1e+308`（均值大于最大值），`replay --json` 的
 `interval_error_days` 直接产出 `Infinity`（不是 JSON）。
 
+**`replay` 的两侧都只收有限值**（2026-11-21 审计）：实际间隔取「有限且
+`> 0`」的 `elapsed_days`，否则按同卡前驱时间戳回推——与
+`stats.review_interval`、`ReviewEvent::new` 写出口的 `0` 同一判据；调度侧
+`state.interval_days` 为 `±Infinity` / `NaN`（只可能来自手工构造的
+`CardState`）时不产生偏差样本。因此内存重放与 `to_jsonl → from_jsonl`
+再重放**逐字段相同**，`+Infinity` 也不会把均值拖成 `Infinity` / `NaN`。
+
 ## 7. CLI `cmd/recall/main.mbt`
 
 ```

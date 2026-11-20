@@ -64,17 +64,27 @@ pub fn[T : Scheduler] replay_with(log : ReviewLog, s : T) -> ReplayResult {
       // 上次调度给出的间隔就是 state.interval_days（review 会覆写它，先存下来）
       let scheduled = state.interval_days
       state = s.review(state, ev.grade, ev.reviewed_at)
-      // 实际间隔：优先用日志里的 elapsed_days（那是当时真实测量的值）；
-      // 缺失（=0）且非首次时，按时间戳差回推。
-      let actual = if ev.elapsed_days > 0.0 {
+      // 实际间隔：优先用日志里**有限且 > 0** 的 elapsed_days（那是当时真实
+      // 测量的值）；否则按同卡前驱时间戳回推。
+      //
+      // 判据与 `stats.review_interval`、`ReviewEvent::new` 的写出口（`0`）
+      // 以及 API.md §2 的全局口径逐字一致：`+Infinity` 不进入均值。
+      // 修复前这里只判 `> 0.0`，`ReviewEvent::new(..., +Infinity)` 会被当成
+      // 样本 → `diff = Infinity - scheduled = Infinity`，再叠一条有限样本时
+      // 增量均值执行 `Infinity - Infinity` **变 NaN**；同一日志落盘（写 0）
+      // 再读回重放却是有限的回推值——`log.mbt` 声明的往返一致性因此破裂。
+      let explicit_ok = ev.elapsed_days > 0.0 && ev.elapsed_days != 1.0 / 0.0
+      let actual = if explicit_ok {
         ev.elapsed_days
       } else if has_prev {
         days_between(prev_reviewed, ev.reviewed_at)
       } else {
         0.0
       }
-      // 间隔偏差只在"有上次调度"时才有意义（首次没有上一个间隔）
-      if has_prev && scheduled > 0.0 {
+      // 间隔偏差只在"有上次调度"且该间隔本身有限时才成立；+
+      // `pub(all) CardState` 的手工状态可以带 Infinity/NaN 进来（API §6
+      // 把 replay 纳入「均值不溢出」不变量），非有限间隔直接不计样本。
+      if has_prev && scheduled > 0.0 && scheduled != 1.0 / 0.0 {
         let diff = actual - scheduled
         let abs_diff = if diff < 0.0 { -diff } else { diff }
         error_count = error_count + 1
