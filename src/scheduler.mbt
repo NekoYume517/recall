@@ -263,6 +263,27 @@ pub fn AnyScheduler::with_retention(
 }
 
 ///|
+/// 「配置 → 调度器」的**唯一**归一化点（2026-11-21 审计，P2）。
+///
+/// 分层约定（RC-3，2026-10-27）：泛型 `simulate_with` /
+/// `simulate_with_budget` **按传入实例原样跑**，`SimConfig.desired_retention`
+/// 只能施加在 `AnyScheduler` 入口。所有「配置说了算」的入口都必须先走这里：
+///
+///   - `simulate`（CLI `simulate`）；
+///   - `advice` 的两条探测路径（`probe_backlog` / `probe_outcome`）。
+///
+/// 修复前 `probe_backlog` 走 `simulate`（字段生效），`probe_outcome` 直接走
+/// 泛型 `simulate_with_budget`（字段被忽略）：同一份 `AdviceRequest` 只改
+/// `desired_retention`，搜索仍给出逐字段相同的答案，而
+/// `probe_final_backlog`（文档称其为「`load_advice` 的构件」）却按新值跑。
+pub fn AnyScheduler::with_config(
+  self : AnyScheduler,
+  config : SimConfig,
+) -> AnyScheduler {
+  self.with_retention(config.desired_retention)
+}
+
+///|
 /// 名字是否是受支持的调度器名（供 CLI 做用法校验）。
 pub fn scheduler_name_valid(name : String) -> Bool {
   match name {

@@ -121,7 +121,11 @@ fn probe_outcome(
   new_per_day : Int32,
   work_limit : Int64,
 ) -> SimOutcome {
-  simulate_with_budget(s, req.to_config(new_per_day), work_limit)
+  // 配置 → 调度器的归一化走唯一入口（`AnyScheduler::with_config`）：
+  // 泛型 `simulate_with_budget` 按实例原样跑，所以 desired_retention
+  // 必须在这里施加，才能与 `probe_backlog`（→ `simulate`）同口径。
+  let cfg = req.to_config(new_per_day)
+  simulate_with_budget(AnyScheduler::with_config(s, cfg), cfg, work_limit)
 }
 
 ///|

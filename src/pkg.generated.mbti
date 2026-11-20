@@ -176,6 +176,7 @@ pub fn AnyScheduler::init(Self, String, Int64) -> CardState
 pub fn AnyScheduler::name(Self) -> String
 pub fn AnyScheduler::retrievability(Self, CardState, Int64) -> Double
 pub fn AnyScheduler::review(Self, CardState, Grade, Int64) -> CardState
+pub fn AnyScheduler::with_config(Self, SimConfig) -> Self
 pub fn AnyScheduler::with_retention(Self, Double) -> Self
 pub impl Scheduler for AnyScheduler
 

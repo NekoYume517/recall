@@ -525,5 +525,5 @@ pub fn[T : Scheduler] simulate_with_budget(
 ///   - **SM-2 / Leitner**：算法本身没有保持率参数
 ///     （`desired_retention()` 固定 0.9 / 1.0），字段对它们无效，原样跑。
 pub fn simulate(s : AnyScheduler, config : SimConfig) -> SimResult {
-  simulate_with(s.with_retention(config.desired_retention), config)
+  simulate_with(AnyScheduler::with_config(s, config), config)
 }

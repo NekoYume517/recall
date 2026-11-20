@@ -471,10 +471,11 @@ pub(all) struct SimConfig {
   ——两者的 `desired_retention()` 分别固定返回 `0.9` / `1.0`，
   没有可调旋钮，字段对它们无效，配置只影响回显。
 
-⚠️ 泛型入口 `simulate_with(s, config)` **按传入实例原样跑**，不读该字段
-（MoonBit 的 trait 不支持默认实现，泛型入口无法重建任意 `T`）。需要让
-配置里的目标保持率生效时用 `simulate`，或先把值施加到实例上
-（`AnyScheduler::with_retention` / `Fsrs::with_retention`）。
+⚠️ 泛型入口 `simulate_with(s, config)` / `simulate_with_budget(s, config, limit)`
+**按传入实例原样跑**，不读该字段（MoonBit 的 trait 不支持默认实现，泛型入口
+无法重建任意 `T`）。需要让配置里的目标保持率生效时用 `simulate`，或先把值
+施加到实例上（`AnyScheduler::with_config(s, config)`，语义上等于
+`AnyScheduler::with_retention` / `Fsrs::with_retention`）。
 
 pub(all) struct SimDay {
   day : Int
@@ -593,6 +594,15 @@ pub(all) enum AdviceOutcome {
 `load_advice` 等价于 `load_advice_with_budget(s, req, Int64.MAX)`——与
 `simulate` / `simulate_with`、`simulate_with_budget` 同一分层：库层老入口保持
 「不限预算」，需要预算的调用方（CLI）走带预算的版本。
+
+**`AdviceRequest.desired_retention` 在两条探测路径上都生效**（2026-11-21
+审计）：配置 → 调度器的归一化收敛在 `AnyScheduler::with_config` 一个点上。
+`probe_backlog`（→ `simulate`）与 `probe_outcome`（→ 泛型
+`simulate_with_budget`，它按实例原样跑）都必须先过它。修复前后者直接吃
+实例，于是同一份请求只改这个字段，搜索结果仍逐字段相同，而
+`probe_final_backlog`（本文件称其为「`load_advice` 的构件」）却按新值跑。
+回归：`src/advice_retention_config_regression_test.mbt`（字段生效 + 与
+`simulate` 逐字段一致 + 单点代回复现同一个积压）。
 
 方法：**模拟搜索（从上界向下逐点扫描）**，不是解析解——积压动力学非线性
 （Again → 间隔回退 → 更多到期 → 评分策略感知逾期更悲观），解析近似会漏掉
