@@ -460,7 +460,19 @@ fn event_from_line(
     line_no,
   )
   let elapsed = field_double(obj, key_elapsed_days(), line_no)
-  let grade = Grade::from_int(@math.round(grade_num).to_int())
+  // 先在 Int64 域夹到 0..5 再转 Int32：直接 to_int() 会在 |rounded| > 2^31
+  // 时低 32 位截断绕回（如 4294967297 → 1 → Hard），违背 Grade::from_int
+  // 文档承诺的「负数按 0、>5 按 5 处理」。区间内的值（含 1.5 → 2 的
+  // round 归一化）行为不变。
+  let rounded_for_grade = @math.round(grade_num)
+  let grade_int : Int32 = if rounded_for_grade <= 0.0 {
+    0
+  } else if rounded_for_grade >= 5.0 {
+    5
+  } else {
+    rounded_for_grade.to_int()
+  }
+  let grade = Grade::from_int(grade_int)
   // RJ-R：原始评分整数进入事件（无损日志）。四舍五入后的整数就是
   // 原文（JSON 数字一行一个值，grade 字段不存在小数形态的合法输入 ——
   // 1.5 会被 round 成 2 写回；这与「评分值是整数刻度」的契约一致）。
