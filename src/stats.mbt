@@ -241,7 +241,16 @@ pub fn retention_curve(
       // 相邻桶严格首尾相接，且与归桶比较逐位同源。
       let lower = safe_width * i.to_double()
       let upper = safe_width * (i + 1).to_double()
-      out.push((lower, upper, passes[i].to_double() / totals[i].to_double()))
+      // 末桶上界直接取 max_elapsed：`width * n_buckets` 的舍入可能**低于**
+      // max_elapsed（IEEE 754 实测：179.9/10000*10000 = 179.89999999999998
+      // < 179.9），而最大样本按归桶封顶规则必定落在末桶——若上界用
+      // width·n，会出现「样本被分进末桶、末桶标签却不包含它」的自相矛盾。
+      // max_elapsed ≥ width·(n-1) 恒成立（width = max/n 的定义保证），
+      // 因此取 max 是对 width·n 的向上修正，不会打破相邻桶的相接关系。
+      let final_upper = if i == n_buckets - 1 { max_elapsed } else { upper }
+      out.push(
+        (lower, final_upper, passes[i].to_double() / totals[i].to_double()),
+      )
     }
     i = i + 1
   }
