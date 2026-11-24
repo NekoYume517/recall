@@ -9,12 +9,54 @@
 //   recall curve    --log <file.jsonl> --buckets 10
 //
 // 退出码：0 成功 / 1 数据错误 / 2 用法错误。
+// 输出流：数据（JSON / TSV / 表格 / 摘要 / 用法）走 stdout，
+//         诊断（用法错误 / 数据错误 / 守卫拒绝 / 预算中止 / 提示）走 stderr。
 //
 // 实现说明：
 // - 手写参数解析（`--key value` / `--flag`），不引 argparse——
 //   依赖越少，CLI 越不容易因为版本漂移而坏。
 // - MoonBit 的 `fn main` 只能返回 Unit，退出码靠 `@sys.exit`。
 // - MoonBit 不支持多行字符串字面量，用法文本用数组拼。
+
+// ---------------------------------------------------------------------------
+// 输出通道：数据 / 诊断
+// ---------------------------------------------------------------------------
+//
+// **契约（API.md 第 7 节）**：stdout 只放数据——`--json` 的 JSON、`--anki` 的
+// TSV、各命令的表格与摘要、用法文本；诊断一律走 stderr——用法错误、数据错误、
+// 量级守卫的拒绝理由、预算中止、⚠ 解读提示。
+//
+// 为什么（第十七轮审计 F1）：本工具的主用法是
+//
+//     recall replay --log x.jsonl --json > out.json
+//
+// 旧实现把诊断也 `println` 到 stdout，于是日志有一行坏数据时 `out.json` 里躺着
+// 一行中文错误、退出码 1 —— 文件不是 JSON，而 stdout 已经被写脏。`--anki`
+// 侧同理：`--json --anki` 同给时的提示行原本会混进 TSV 正文。
+//
+// 两个接收端用 `Ref` 暴露：进程级 stdout/stderr 在 `moon test` 进程里分不开，
+// 白盒测试必须能把它们换成内存收集器，才能断言「诊断不污染 stdout」。
+// `cli_stream_split_wbtest.mbt` 就是锁这条的。
+
+///|
+let stdout_sink : Ref[(String) -> Unit] = { val: fn(msg) { println(msg) }, }
+
+///|
+let stderr_sink : Ref[(String) -> Unit] = { val: fn(msg) { eprintln(msg) }, }
+
+///|
+/// 数据输出（stdout）：表格、摘要、JSON、TSV、用法文本。
+fn emit(msg : String) -> Unit {
+  let sink = stdout_sink.val
+  sink(msg)
+}
+
+///|
+/// 诊断输出（stderr）：用法错误、数据错误、守卫拒绝、预算中止、提示。
+fn diag(msg : String) -> Unit {
+  let sink = stderr_sink.val
+  sink(msg)
+}
 
 // ---------------------------------------------------------------------------
 // 参数解析
@@ -511,7 +553,8 @@ fn usage_text() -> String {
     "", "参数写法: --key value 与 --key=value 等价；--flag 表示布尔开",
     "          同一参数重复给出时后者生效 (last-wins)", "          不以 -- 开头的裸参数会被拒绝（必须写成 --key value 或 --key=value）",
     "          单独一个 -- 也不被接受：本工具没有「选项结束」记号，它会被当成多余的裸参数",
-    "", "退出码: 0 成功 / 1 数据错误 / 2 用法错误", "",
+    "", "退出码: 0 成功 / 1 数据错误 / 2 用法错误", "输出: 数据 (JSON/TSV/表格/摘要/本说明) 走 stdout, 诊断 (错误/警告/提示) 走 stderr",
+    "",
   ]
   let sb = StringBuilder()
   for line in lines {
@@ -1043,13 +1086,13 @@ fn read_text(path : String) -> String? {
 fn load_log(path : String) -> @lib.ReviewLog? {
   match read_text(path) {
     None => {
-      println("数据错误: 无法读取文件 " + path)
+      diag("数据错误: 无法读取文件 " + path)
       None
     }
     Some(text) => {
       let parsed = Some(@lib.ReviewLog::from_jsonl(text)) catch {
         @lib.BadLine(ln, why) => {
-          println(
+          diag(
             "数据错误: 第 " +
             ln.to_string() +
             " 行解析失败 — " +
@@ -1058,7 +1101,7 @@ fn load_log(path : String) -> @lib.ReviewLog? {
           None
         }
         @lib.BadTimestamp(ln, raw) => {
-          println(
+          diag(
             "数据错误: 第 " +
             ln.to_string() +
             " 行时间戳非法 — " +
@@ -1067,7 +1110,7 @@ fn load_log(path : String) -> @lib.ReviewLog? {
           None
         }
         _ => {
-          println("数据错误: JSONL 解析失败")
+          diag("数据错误: JSONL 解析失败")
           None
         }
       }
@@ -1079,7 +1122,7 @@ fn load_log(path : String) -> @lib.ReviewLog? {
             // Err 分支必须打印原因：core 的 from_jsonl 把错误包在 Result 里，
             // 不 raise 也不打印，静默返回 None 会让用户只看到退出码 1。
             Err(@lib.BadLine(ln, why)) => {
-              println(
+              diag(
                 "数据错误: 第 " +
                 ln.to_string() +
                 " 行解析失败 — " +
@@ -1088,7 +1131,7 @@ fn load_log(path : String) -> @lib.ReviewLog? {
               None
             }
             Err(@lib.BadTimestamp(ln, raw)) => {
-              println(
+              diag(
                 "数据错误: 第 " +
                 ln.to_string() +
                 " 行时间戳非法 — " +
@@ -1110,12 +1153,12 @@ fn load_log(path : String) -> @lib.ReviewLog? {
 fn cmd_replay(args : Args) -> Int32 {
   let path = args.get("log", "")
   if path.length() == 0 {
-    println("用法错误: replay 需要 --log FILE")
+    diag("用法错误: replay 需要 --log FILE")
     return 2
   }
   let sched_name = args.get("scheduler", "fsrs")
   if !@lib.scheduler_name_valid(sched_name) {
-    println(
+    diag(
       "用法错误: 未知调度器 " +
       sched_name +
       "（可选 sm2 / fsrs / leitner）",
@@ -1130,7 +1173,7 @@ fn cmd_replay(args : Args) -> Int32 {
   let res = @lib.replay(log, s)
   let conflict = replay_conflict_hint(args.flag("anki"), args.flag("json"))
   if conflict.length() > 0 {
-    println(conflict)
+    diag(conflict)
   }
   if args.flag("anki") {
     // Anki 文本导入格式（TSV）：File > Import 直接可用
@@ -1146,7 +1189,7 @@ fn cmd_replay(args : Args) -> Int32 {
         None => ()
       }
     }
-    println(@lib.export_anki_tsv(states, s.name()))
+    emit(@lib.export_anki_tsv(states, s.name()))
     return 0
   }
   if args.flag("json") {
@@ -1185,20 +1228,18 @@ fn cmd_replay(args : Args) -> Int32 {
       sb.write_string(fmt_json_number(iv, 2))
     }
     sb.write_string("}}")
-    println(sb.to_string())
+    emit(sb.to_string())
   } else {
-    println("调度器: " + s.name())
-    println(
-      "日志:   " + path + " (" + log.length().to_string() + " 个事件)",
-    )
-    println("卡片:   " + res.final_states.length().to_string() + " 张")
-    println("复习:   " + res.total_reviews.to_string() + " 次")
-    println("遗忘:   " + res.total_lapses.to_string() + " 次")
-    println(
+    emit("调度器: " + s.name())
+    emit("日志:   " + path + " (" + log.length().to_string() + " 个事件)")
+    emit("卡片:   " + res.final_states.length().to_string() + " 张")
+    emit("复习:   " + res.total_reviews.to_string() + " 次")
+    emit("遗忘:   " + res.total_lapses.to_string() + " 次")
+    emit(
       "平均间隔偏差: " + fmt_float(res.interval_error_days, 2) + " 天",
     )
-    println("")
-    println(
+    emit("")
+    emit(
       pad_right("卡片", 12) +
       pad_left("间隔(天)", 12) +
       pad_left("稳定性", 12) +
@@ -1216,7 +1257,7 @@ fn cmd_replay(args : Args) -> Int32 {
       pad_left("遗忘", 7) +
       "  阶段",
     )
-    println(hr(72))
+    emit(hr(72))
     let ids : Array[String] = []
     for cid in res.final_states.keys() {
       ids.push(cid)
@@ -1227,7 +1268,7 @@ fn cmd_replay(args : Args) -> Int32 {
         Some(v) => v
         None => continue
       }
-      println(
+      emit(
         pad_right(cid, 12) +
         pad_left(fmt_float(st.interval_days, 2), 12) +
         pad_left(fmt_float(st.stability, 2), 12) +
@@ -1250,17 +1291,17 @@ fn cmd_replay(args : Args) -> Int32 {
 fn cmd_compare(args : Args) -> Int32 {
   let path = args.get("log", "")
   if path.length() == 0 {
-    println("用法错误: compare 需要 --log FILE")
+    diag("用法错误: compare 需要 --log FILE")
     return 2
   }
   let a_name = args.get("a", "sm2")
   let b_name = args.get("b", "fsrs")
   if !@lib.scheduler_name_valid(a_name) {
-    println("用法错误: 未知调度器 --a " + a_name)
+    diag("用法错误: 未知调度器 --a " + a_name)
     return 2
   }
   if !@lib.scheduler_name_valid(b_name) {
-    println("用法错误: 未知调度器 --b " + b_name)
+    diag("用法错误: 未知调度器 --b " + b_name)
     return 2
   }
   let log = match load_log(path) {
@@ -1270,8 +1311,8 @@ fn cmd_compare(args : Args) -> Int32 {
   let a = @lib.AnyScheduler::by_name(a_name)
   let b = @lib.AnyScheduler::by_name(b_name)
   let c = @lib.compare(log, a, b)
-  println("对比: " + c.a_name + "  vs  " + c.b_name)
-  println(
+  emit("对比: " + c.a_name + "  vs  " + c.b_name)
+  emit(
     "日志: " +
     path +
     "  (" +
@@ -1280,8 +1321,8 @@ fn cmd_compare(args : Args) -> Int32 {
     c.per_card.length().to_string() +
     " 卡片)",
   )
-  println("")
-  println(
+  emit("")
+  emit(
     pad_right("指标", 22) +
     " " +
     pad_left(c.a_name, 14) +
@@ -1290,8 +1331,8 @@ fn cmd_compare(args : Args) -> Int32 {
     " " +
     pad_left("差值", 14),
   )
-  println(hr(68))
-  println(
+  emit(hr(68))
+  emit(
     pad_right("最终间隔总和(天)", 22) +
     " " +
     pad_left(fmt_float(c.a_total_interval, 1), 14) +
@@ -1300,7 +1341,7 @@ fn cmd_compare(args : Args) -> Int32 {
     " " +
     pad_left(fmt_float(c.b_total_interval - c.a_total_interval, 1), 14),
   )
-  println(
+  emit(
     pad_right("遗忘次数", 22) +
     " " +
     pad_left(c.a_lapses.to_string(), 14) +
@@ -1312,7 +1353,7 @@ fn cmd_compare(args : Args) -> Int32 {
   let n = c.per_card.length()
   let a_avg = if n == 0 { 0.0 } else { c.a_total_interval / n.to_double() }
   let b_avg = if n == 0 { 0.0 } else { c.b_total_interval / n.to_double() }
-  println(
+  emit(
     pad_right("平均间隔(天)", 22) +
     " " +
     pad_left(fmt_float(a_avg, 1), 14) +
@@ -1337,7 +1378,7 @@ fn cmd_compare(args : Args) -> Int32 {
       b_at_cap = b_at_cap + 1
     }
   }
-  println(
+  emit(
     pad_right("触及上限(100年)卡数", 22) +
     " " +
     pad_left(a_at_cap.to_string(), 14) +
@@ -1346,9 +1387,9 @@ fn cmd_compare(args : Args) -> Int32 {
     " " +
     pad_left((b_at_cap - a_at_cap).to_string(), 14),
   )
-  println("")
-  println("逐卡对比")
-  println(
+  emit("")
+  emit("逐卡对比")
+  emit(
     pad_right("卡片", 14) +
     " " +
     pad_left(c.a_name, 14) +
@@ -1357,9 +1398,9 @@ fn cmd_compare(args : Args) -> Int32 {
     " " +
     pad_left("差值", 14),
   )
-  println(hr(60))
+  emit(hr(60))
   for row in c.per_card {
-    println(
+    emit(
       pad_right(row.0, 14) +
       " " +
       pad_left(fmt_float(row.1, 1), 14) +
@@ -1375,8 +1416,8 @@ fn cmd_compare(args : Args) -> Int32 {
     1.0
   }
   if n > 0 && c.a_total_interval > 0.0 {
-    println("")
-    println(
+    emit("")
+    emit(
       "→ " +
       c.b_name +
       " 的最终间隔是 " +
@@ -1391,10 +1432,10 @@ fn cmd_compare(args : Args) -> Int32 {
   let a_capped = a_at_cap > 0
   let b_capped = b_at_cap > 0
   if a_capped || b_capped {
-    println("")
-    println("⚠ 指标解读")
+    diag("")
+    diag("⚠ 指标解读")
     if a_capped {
-      println(
+      diag(
         "  " +
         c.a_name +
         " 有 " +
@@ -1403,15 +1444,15 @@ fn cmd_compare(args : Args) -> Int32 {
         n.to_string() +
         " 张卡触及 100 年上限：该算法认为它们 100 年后才需复习，",
       )
-      println(
+      diag(
         "  在真实场景中等价于「永远不再复习」。这些卡把间隔总和拉得很大，",
       )
-      println(
+      diag(
         "  因此「间隔总和/平均间隔」在此**不能**直接当作优劣比较。",
       )
     }
     if b_capped {
-      println(
+      diag(
         "  " +
         c.b_name +
         " 有 " +
@@ -1421,15 +1462,15 @@ fn cmd_compare(args : Args) -> Int32 {
         " 张卡触及 100 年上限，同样不可直接比较。",
       )
     }
-    println(
+    diag(
       "  更可比的指标是「触及上限卡数」（越少越好）与「遗忘次数」。",
     )
   } else if ratio > 10.0 || ratio < 0.1 {
-    println("")
-    println(
+    diag("")
+    diag(
       "⚠ 两侧间隔相差超过 10 倍，总量指标可能被少数极端卡主导，",
     )
-    println("  建议结合逐卡对比与遗忘次数一起看。")
+    diag("  建议结合逐卡对比与遗忘次数一起看。")
   }
   0
 }
@@ -1442,12 +1483,12 @@ fn cmd_compare(args : Args) -> Int32 {
 fn cmd_simulate(args : Args) -> Int32 {
   let sched_name = args.get("scheduler", "fsrs")
   if !@lib.scheduler_name_valid(sched_name) {
-    println("用法错误: 未知调度器 " + sched_name)
+    diag("用法错误: 未知调度器 " + sched_name)
     return 2
   }
   let policy = args.get("policy", "realistic")
   if !@lib.grade_policy_valid(policy) {
-    println(
+    diag(
       "用法错误: 未知评分策略 " +
       policy +
       "（可选 optimistic / realistic / pessimistic）",
@@ -1463,7 +1504,7 @@ fn cmd_simulate(args : Args) -> Int32 {
       match parse_int_loose(v) {
         Some(n) => n
         None => {
-          println("用法错误: --days 需要一个整数，得到 '\{v}'")
+          diag("用法错误: --days 需要一个整数，得到 '\{v}'")
           return 2
         }
       }
@@ -1474,9 +1515,7 @@ fn cmd_simulate(args : Args) -> Int32 {
       match parse_int_loose(v) {
         Some(n) => n
         None => {
-          println(
-            "用法错误: --new-per-day 需要一个整数，得到 '\{v}'",
-          )
+          diag("用法错误: --new-per-day 需要一个整数，得到 '\{v}'")
           return 2
         }
       }
@@ -1487,7 +1526,7 @@ fn cmd_simulate(args : Args) -> Int32 {
       match parse_int_loose(v) {
         Some(n) => n
         None => {
-          println(
+          diag(
             "用法错误: --review-limit 需要一个整数，得到 '\{v}'",
           )
           return 2
@@ -1500,9 +1539,7 @@ fn cmd_simulate(args : Args) -> Int32 {
       match parse_double_loose(v) {
         Some(n) => n
         None => {
-          println(
-            "用法错误: --retention 需要一个小数，得到 '\{v}'",
-          )
+          diag("用法错误: --retention 需要一个小数，得到 '\{v}'")
           return 2
         }
       }
@@ -1513,7 +1550,7 @@ fn cmd_simulate(args : Args) -> Int32 {
       match parse_int64_loose(v) {
         Some(n) => n
         None => {
-          println("用法错误: --seed 需要一个整数，得到 '\{v}'")
+          diag("用法错误: --seed 需要一个整数，得到 '\{v}'")
           return 2
         }
       }
@@ -1521,11 +1558,11 @@ fn cmd_simulate(args : Args) -> Int32 {
   // 量级守卫：负数与天文天数都在这里拦下
   let days_err = days_range_error(days)
   if days_err.length() > 0 {
-    println(days_err)
+    diag(days_err)
     return 2
   }
   if new_per_day < 0 {
-    println("用法错误: --new-per-day 必须非负")
+    diag("用法错误: --new-per-day 必须非负")
     return 2
   }
   // **量级守卫**（N-3，2026-11-04 审计）。
@@ -1545,17 +1582,17 @@ fn cmd_simulate(args : Args) -> Int32 {
   //   --new-per-day / --review-limit <= 100000（每张卡每天一条记录的量级）
   // 100000 张/天已远超任何真实学习场景（一年也才 3650 万张），不误伤。
   if new_per_day > 100000 {
-    println(
+    diag(
       "用法错误: --new-per-day 必须 <= 100000（模拟器逐张建卡，超出会耗尽内存），得到 \{new_per_day}",
     )
     return 2
   }
   if review_limit < 0 {
-    println("用法错误: --review-limit 必须非负（0 表示不限）")
+    diag("用法错误: --review-limit 必须非负（0 表示不限）")
     return 2
   }
   if review_limit > 100000 {
-    println(
+    diag(
       "用法错误: --review-limit 必须 <= 100000（模拟器逐张复习，超出会耗尽内存），得到 \{review_limit}",
     )
     return 2
@@ -1573,7 +1610,7 @@ fn cmd_simulate(args : Args) -> Int32 {
   // 所以比较用 `>`（`cli_hygiene_test.mbt` 的 N-3 用例锁的是 `days=1 × 100000`）。
   let total_cards_err = total_cards_error(days, new_per_day)
   if total_cards_err.length() > 0 {
-    println(total_cards_err)
+    diag(total_cards_err)
     return 2
   }
   // **扫描量守卫**（2026-11-13 审计 D1）。上面那条管的是卡数（内存），
@@ -1583,7 +1620,7 @@ fn cmd_simulate(args : Args) -> Int32 {
   // 只是这侧当时只按 days 修了一半。
   let scan_err = simulate_scan_error(days, new_per_day)
   if scan_err.length() > 0 {
-    println(scan_err)
+    diag(scan_err)
     return 2
   }
   let cfg : @lib.SimConfig = {
@@ -1608,7 +1645,7 @@ fn cmd_simulate(args : Args) -> Int32 {
   let res = match outcome {
     @lib.Completed(r) => r
     @lib.Aborted(a) => {
-      println(simulate_budget_error(a, days, new_per_day, review_limit))
+      diag(simulate_budget_error(a, days, new_per_day, review_limit))
       return 2
     }
   }
@@ -1616,7 +1653,7 @@ fn cmd_simulate(args : Args) -> Int32 {
   // （算法局限），此时如实告知而不是沉默地忽略。fsrs 越界被夹时，
   // 参数行打印**生效值**并附提示行——打印请求值会让用户以为 0.3 生效了。
   if sched_name != "fsrs" && target_retention != 0.9 {
-    println(
+    diag(
       "提示: " +
       sched_name +
       " 调度器没有目标保持率参数（算法局限），" +
@@ -1627,11 +1664,11 @@ fn cmd_simulate(args : Args) -> Int32 {
   }
   let retention_hint_line = retention_hint(sched_name, target_retention)
   if retention_hint_line.length() > 0 {
-    println(retention_hint_line)
+    diag(retention_hint_line)
   }
   let effective_r = effective_retention(sched_name, target_retention)
-  println("模拟: " + s.name() + " / " + policy + " 策略")
-  println(
+  emit("模拟: " + s.name() + " / " + policy + " 策略")
+  emit(
     "参数: " +
     days.to_string() +
     " 天, 每天新增 " +
@@ -1643,8 +1680,8 @@ fn cmd_simulate(args : Args) -> Int32 {
     ", 种子 " +
     seed.to_string(),
   )
-  println("")
-  println(
+  emit("")
+  emit(
     pad_right("天", 8) +
     pad_left("新卡", 8) +
     pad_left("到期", 8) +
@@ -1653,14 +1690,14 @@ fn cmd_simulate(args : Args) -> Int32 {
     pad_left("积压", 8) +
     "  积压趋势",
   )
-  println(hr(78))
+  emit(hr(78))
   // 长模拟按步长抽样，避免 90 行刷屏；但首尾必出
   let step = if days <= 20 { 1 } else if days <= 45 { 3 } else { 7 }
   let max_b = if res.max_backlog == 0 { 1 } else { res.max_backlog }
   for d in res.days {
     let show = d.day == 0 || d.day == days - 1 || d.day % step == 0
     if show {
-      println(
+      emit(
         pad_right("#" + (d.day + 1).to_string(), 8) +
         pad_left(d.new_cards.to_string(), 8) +
         pad_left(d.due_cards.to_string(), 8) +
@@ -1672,13 +1709,13 @@ fn cmd_simulate(args : Args) -> Int32 {
       )
     }
   }
-  println("")
-  println("总复习次数: " + res.total_reviews.to_string())
-  println("最大积压:   " + res.max_backlog.to_string() + " 张")
-  println("最终积压:   " + res.final_backlog.to_string() + " 张")
+  emit("")
+  emit("总复习次数: " + res.total_reviews.to_string())
+  emit("最大积压:   " + res.max_backlog.to_string() + " 张")
+  emit("最终积压:   " + res.final_backlog.to_string() + " 张")
   if res.final_backlog > 0 {
-    println("")
-    println(
+    emit("")
+    emit(
       "→ " +
       days.to_string() +
       " 天后仍有 " +
@@ -1697,7 +1734,7 @@ fn cmd_simulate(args : Args) -> Int32 {
 fn cmd_stats(args : Args) -> Int32 {
   let path = args.get("log", "")
   if path.length() == 0 {
-    println("用法错误: stats 需要 --log FILE")
+    diag("用法错误: stats 需要 --log FILE")
     return 2
   }
   let log = match load_log(path) {
@@ -1706,16 +1743,16 @@ fn cmd_stats(args : Args) -> Int32 {
   }
   let rows = @lib.compute_stats(log)
   let overall = @lib.overall_stats(rows)
-  println("统计: " + path)
-  println(
+  emit("统计: " + path)
+  emit(
     "      " +
     log.length().to_string() +
     " 个事件 / " +
     overall.cards.to_string() +
     " 张卡片",
   )
-  println("")
-  println(
+  emit("")
+  emit(
     pad_right("卡片", 14) +
     pad_left("复习", 8) +
     pad_left("遗忘", 8) +
@@ -1723,9 +1760,9 @@ fn cmd_stats(args : Args) -> Int32 {
     pad_left("最大间隔", 11) +
     pad_left("保持率", 10),
   )
-  println(hr(61))
+  emit(hr(61))
   for r in rows {
-    println(
+    emit(
       pad_right(r.card_id, 14) +
       pad_left(r.reviews.to_string(), 8) +
       pad_left(r.lapses.to_string(), 8) +
@@ -1734,8 +1771,8 @@ fn cmd_stats(args : Args) -> Int32 {
       pad_left(fmt_pct(r.retention_rate), 10),
     )
   }
-  println(hr(61))
-  println(
+  emit(hr(61))
+  emit(
     pad_right("合计", 14) +
     pad_left(overall.reviews.to_string(), 8) +
     pad_left(overall.lapses.to_string(), 8) +
@@ -1754,7 +1791,7 @@ fn cmd_stats(args : Args) -> Int32 {
 fn cmd_curve(args : Args) -> Int32 {
   let path = args.get("log", "")
   if path.length() == 0 {
-    println("用法错误: curve 需要 --log FILE")
+    diag("用法错误: curve 需要 --log FILE")
     return 2
   }
   // 数值参数区分「未提供」（用默认）与「提供了但不是数字」（用法错误），
@@ -1767,13 +1804,13 @@ fn cmd_curve(args : Args) -> Int32 {
       match parse_int_loose(v) {
         Some(n) => n
         None => {
-          println("用法错误: --buckets 需要一个整数，得到 '\{v}'")
+          diag("用法错误: --buckets 需要一个整数，得到 '\{v}'")
           return 2
         }
       }
   }
   if buckets < 1 {
-    println("用法错误: --buckets 必须 >= 1")
+    diag("用法错误: --buckets 必须 >= 1")
     return 2
   }
   // 上界 10000：retention_curve 会按桶数分配两个 Int 数组
@@ -1781,7 +1818,7 @@ fn cmd_curve(args : Args) -> Int32 {
   // wasm 分配直接 unreachable 崩溃（exit 1 + 栈回溯），而不是可读的
   // 用法错误。真实曲线用不到上万桶，超出即视为误输入。
   if buckets > 10000 {
-    println("用法错误: --buckets 必须 <= 10000，得到 \{buckets}")
+    diag("用法错误: --buckets 必须 <= 10000，得到 \{buckets}")
     return 2
   }
   let log = match load_log(path) {
@@ -1789,21 +1826,21 @@ fn cmd_curve(args : Args) -> Int32 {
     None => return 1
   }
   let curve = @lib.retention_curve(log, buckets)
-  println("保持率曲线: " + path + "（" + buckets.to_string() + " 桶）")
-  println("")
+  emit("保持率曲线: " + path + "（" + buckets.to_string() + " 桶）")
+  emit("")
   if curve.length() == 0 {
     // R5：空结果有两种原因，混在一句里会误导——「每卡只有一次复习」
     // 和「日志为空」是不同的问题。另外说明分桶语义：每个桶是左闭右开
     // `[lo, hi)`（最后一桶闭区间覆盖最大值），所以 elapsed 恰好等于
     // 桶下界的样本归入该桶。与 compute_stats（直接对事件算）数值不同
     // 的原因是按桶聚合，不是边界归属模糊。
-    println(
+    emit(
       "（保持率曲线为空：分桶需要同卡多次复习产生的正间隔样本；",
     )
-    println(
+    emit(
       "  日志为空、每卡仅一次复习时结果为空。桶为左闭右开 [lo, hi)，",
     )
-    println("  最后一桶为闭区间以覆盖最大间隔）")
+    emit("  最后一桶为闭区间以覆盖最大间隔）")
     return 0
   }
   // 标签精度跟着桶宽走：桶宽 < 1 天时 1 位小数会把 [x, x+w) 打印成
@@ -1840,12 +1877,12 @@ fn cmd_curve(args : Args) -> Int32 {
       label_width = label.length() + 1
     }
   }
-  println(
+  emit(
     pad_right("间隔区间(天)", label_width) +
     pad_left("保持率", 10) +
     "  曲线",
   )
-  println(hr(62))
+  emit(hr(62))
   for i, row in curve {
     let cells = (row.2 * 30.0).to_int()
     let sb = StringBuilder()
@@ -1854,7 +1891,7 @@ fn cmd_curve(args : Args) -> Int32 {
       sb.write_string("#")
       j = j + 1
     }
-    println(
+    emit(
       pad_right(labels[i], label_width) +
       pad_left(fmt_pct(row.2), 10) +
       "  " +
@@ -1870,11 +1907,11 @@ fn cmd_curve(args : Args) -> Int32 {
     }
     prev = row.2
   }
-  println("")
+  emit("")
   if monotone {
-    println("→ 曲线单调不增，符合遗忘规律")
+    emit("→ 曲线单调不增，符合遗忘规律")
   } else {
-    println("→ 曲线出现回升（样本噪声，或分桶过细）")
+    emit("→ 曲线出现回升（样本噪声，或分桶过细）")
   }
   0
 }
@@ -1891,12 +1928,12 @@ fn cmd_curve(args : Args) -> Int32 {
 fn cmd_advice(args : Args) -> Int32 {
   let sched_name = args.get("scheduler", "fsrs")
   if !@lib.scheduler_name_valid(sched_name) {
-    println("用法错误: 未知调度器 " + sched_name)
+    diag("用法错误: 未知调度器 " + sched_name)
     return 2
   }
   let policy = args.get("policy", "realistic")
   if !@lib.grade_policy_valid(policy) {
-    println("用法错误: 未知评分策略 " + policy)
+    diag("用法错误: 未知评分策略 " + policy)
     return 2
   }
   let days = match args.get_opt("days") {
@@ -1905,7 +1942,7 @@ fn cmd_advice(args : Args) -> Int32 {
       match parse_int_loose(v) {
         Some(n) => n
         None => {
-          println("用法错误: --days 需要一个整数，得到 '\{v}'")
+          diag("用法错误: --days 需要一个整数，得到 '\{v}'")
           return 2
         }
       }
@@ -1916,7 +1953,7 @@ fn cmd_advice(args : Args) -> Int32 {
       match parse_int_loose(v) {
         Some(n) => n
         None => {
-          println(
+          diag(
             "用法错误: --review-limit 需要一个整数，得到 '\{v}'",
           )
           return 2
@@ -1929,9 +1966,7 @@ fn cmd_advice(args : Args) -> Int32 {
       match parse_double_loose(v) {
         Some(n) => n
         None => {
-          println(
-            "用法错误: --retention 需要一个小数，得到 '\{v}'",
-          )
+          diag("用法错误: --retention 需要一个小数，得到 '\{v}'")
           return 2
         }
       }
@@ -1942,7 +1977,7 @@ fn cmd_advice(args : Args) -> Int32 {
       match parse_int64_loose(v) {
         Some(n) => n
         None => {
-          println("用法错误: --seed 需要一个整数，得到 '\{v}'")
+          diag("用法错误: --seed 需要一个整数，得到 '\{v}'")
           return 2
         }
       }
@@ -1953,7 +1988,7 @@ fn cmd_advice(args : Args) -> Int32 {
       match parse_int_loose(v) {
         Some(n) => n
         None => {
-          println(
+          diag(
             "用法错误: --target-backlog 需要一个整数，得到 '\{v}'",
           )
           return 2
@@ -1961,7 +1996,7 @@ fn cmd_advice(args : Args) -> Int32 {
       }
   }
   if days <= 0 {
-    println("用法错误: --days 必须为正")
+    diag("用法错误: --days 必须为正")
     return 2
   }
   // advice 每次 probe 都是一整段完整模拟，而 `load_advice` 最多探测
@@ -1969,26 +2004,26 @@ fn cmd_advice(args : Args) -> Int32 {
   // 旧注释写错了量级。单轴守卫与 simulate 同阈值，乘积另由下面的
   // `advice_cost_error` 管。
   if days > 100000 {
-    println(
+    diag(
       "用法错误: --days 必须 <= 100000（advice 每次探测都是完整模拟），得到 \{days}",
     )
     return 2
   }
   if review_limit < 0 {
-    println("用法错误: --review-limit 必须非负（0 表示不限）")
+    diag("用法错误: --review-limit 必须非负（0 表示不限）")
     return 2
   }
   // --review-limit 同时是 advice 的**扫描上界**（探测次数随它增长），
   // 所以它比 simulate 更敏感：`--review-limit 100000000` 会先在第一发探测
   // 里 wasm 分配崩溃（N-3）。守卫阈值与 simulate 对齐。
   if review_limit > 100000 {
-    println(
+    diag(
       "用法错误: --review-limit 必须 <= 100000（它既是复习上限也是扫描上界，超出会耗尽内存），得到 \{review_limit}",
     )
     return 2
   }
   if target_backlog < 0 {
-    println("用法错误: --target-backlog 必须非负")
+    diag("用法错误: --target-backlog 必须非负")
     return 2
   }
   // **成本守卫**（2026-11-12 遗留项 A1）。上面两条单轴守卫管不住乘积：
@@ -1997,14 +2032,14 @@ fn cmd_advice(args : Args) -> Int32 {
   // 依据见 `advice_cost_error` 的注释。放在单轴守卫之后，保证乘积不溢出。
   let advice_cost_err = advice_cost_error(days, review_limit)
   if advice_cost_err.length() > 0 {
-    println(advice_cost_err)
+    diag(advice_cost_err)
     return 2
   }
   let s = @lib.AnyScheduler::by_name_with_retention(
     sched_name, target_retention,
   )
   if sched_name != "fsrs" && target_retention != 0.9 {
-    println(
+    diag(
       "提示: " +
       sched_name +
       " 调度器没有目标保持率参数（算法局限），--retention 未生效（仅 FSRS 支持）",
@@ -2013,7 +2048,7 @@ fn cmd_advice(args : Args) -> Int32 {
   // fsrs 越界夹取的提示与 simulate 同一条路径；参数行打印生效值。
   let retention_hint_line = retention_hint(sched_name, target_retention)
   if retention_hint_line.length() > 0 {
-    println(retention_hint_line)
+    diag(retention_hint_line)
   }
   let effective_r = effective_retention(sched_name, target_retention)
   let req : @lib.AdviceRequest = {
@@ -2030,12 +2065,12 @@ fn cmd_advice(args : Args) -> Int32 {
   let r = match @lib.load_advice_with_budget(s, req, simulate_work_limit()) {
     @lib.AdviceCompleted(r) => r
     @lib.AdviceAborted(a) => {
-      println(advice_budget_error(a, days, review_limit))
+      diag(advice_budget_error(a, days, review_limit))
       return 2
     }
   }
-  println("负载建议: " + s.name() + " / " + policy + " 策略")
-  println(
+  emit("负载建议: " + s.name() + " / " + policy + " 策略")
+  emit(
     "参数: " +
     days.to_string() +
     " 天窗口, 复习上限 " +
@@ -2047,11 +2082,11 @@ fn cmd_advice(args : Args) -> Int32 {
     ", 种子 " +
     seed.to_string(),
   )
-  println("")
-  println("→ 推荐每天新卡: " + r.new_per_day.to_string() + " 张")
-  println("")
-  println("依据（该速率下的模拟）:")
-  println(
+  emit("")
+  emit("→ 推荐每天新卡: " + r.new_per_day.to_string() + " 张")
+  emit("")
+  emit("依据（该速率下的模拟）:")
+  emit(
     "  最终积压 " +
     r.final_backlog.to_string() +
     " 张（目标 ≤ " +
@@ -2064,21 +2099,21 @@ fn cmd_advice(args : Args) -> Int32 {
   )
   match r.next_step_backlog {
     Some(nb) =>
-      println(
+      emit(
         "  每天多学 1 张 → 最终积压 " +
         nb.to_string() +
         " 张, 超出目标",
       )
     None => ()
   }
-  println("")
-  println(r.summary)
+  emit("")
+  emit(r.summary)
   // 附积压趋势摘要（首/中/尾三天）
   let dl = r.simulation.days
   if dl.length() >= 3 {
     let mid = dl[dl.length() / 2]
-    println("")
-    println(
+    emit("")
+    emit(
       "积压轨迹: 首日 " +
       dl[0].backlog.to_string() +
       " → 中段 " +
@@ -2177,9 +2212,9 @@ fn positional_args_error(sub : String, args : Args) -> String {
 
 ///|
 fn usage_error(msg : String) -> Unit {
-  println("用法错误: " + msg)
-  println("")
-  println(usage_text())
+  diag("用法错误: " + msg)
+  diag("")
+  diag(usage_text())
 }
 
 ///|
@@ -2193,7 +2228,7 @@ fn main {
     i = i + 1
   }
   if rest.length() == 0 {
-    println(usage_text())
+    diag(usage_text())
     @sys.exit(2)
   }
   let sub = rest[0]
@@ -2238,7 +2273,7 @@ fn main {
   // 剩下的全是多余的——`recall simulate 200` 以前跑默认 90 天并 exit 0。
   let positional_err = positional_args_error(sub, args)
   if positional_err.length() > 0 {
-    println(positional_err)
+    diag(positional_err)
     @sys.exit(2)
   }
   if allowed.length() > 0 {
@@ -2256,7 +2291,7 @@ fn main {
     if unknown.length() > 0 {
       let unknown_text = unknown.join(", ")
       let allowed_text = allowed.join(", ")
-      println(
+      diag(
         "用法错误: 未知参数 \{unknown_text}（\{sub} 接受: \{allowed_text}）",
       )
       @sys.exit(2)
@@ -2266,7 +2301,7 @@ fn main {
     // 静默回退默认值 —— 与「--days abc / --days= 都 exit 2」三态不一致。
     let flag_err = flag_shaped_value_error(sub, args)
     if flag_err.length() > 0 {
-      println(flag_err)
+      diag(flag_err)
       @sys.exit(2)
     }
   }
@@ -2278,15 +2313,15 @@ fn main {
     "stats" => cmd_stats(args)
     "curve" => cmd_curve(args)
     "help" => {
-      println(usage_text())
+      emit(usage_text())
       0
     }
     "--help" => {
-      println(usage_text())
+      emit(usage_text())
       0
     }
     "-h" => {
-      println(usage_text())
+      emit(usage_text())
       0
     }
     _ => {

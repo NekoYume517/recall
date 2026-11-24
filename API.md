@@ -912,6 +912,22 @@ recall curve    --log <file.jsonl> --buckets 10
 
 退出码：0 成功，1 数据错误，2 用法错误。
 
+**输出流分道（第十七轮审计 F1）**：stdout **只放数据**——`--json` 的 JSON、
+`--anki` 的 TSV、各命令的表格与摘要、`--help` 的用法文本；**诊断一律走
+stderr**——用法错误、数据错误、量级守卫的拒绝理由、预算中止、`⚠` 解读提示、
+「提示: …」这类夹取告知。
+
+```powershell
+# 修前（错）：诊断写在 stdout，坏日志让 out.json 变成一行中文
+recall replay --log bad.jsonl --json > out.json   # out.json = "数据错误: 第 2 行…"
+# 修后（对）：out.json 一个字节都没有，诊断在 stderr，退出码 1
+```
+
+入口是 `main.mbt` 的 `emit`（stdout）/ `diag`（stderr）两个函数，接收端用
+`Ref` 暴露（`stdout_sink` / `stderr_sink`），白盒测试替换它们来断言分流，
+见 `cmd/recall/cli_stream_split_wbtest.mbt`。
+
+
 `--json` / `--anki` 是布尔参数，**显式 `false` 生效**：`--json=false` / `--json=0`
 关掉 JSON（打印表格），`--json` / `--json=` / `--json=true` 开启（2026-11-17 审计）。
 
