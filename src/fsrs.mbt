@@ -41,12 +41,20 @@ let factor : Double = 19.0 / 81.0
 /// - `s`：稳定性 S（保持天数）；S ≤ 0 时视为"尚无记忆"，返回 1
 ///
 /// 关键恒等式：**R(S, S) = 0.9**。这是 FSRS 里 S 的定义，也是全套测试的锚点。
+///
+/// 「先除后乘」（第十七轮审计 F3）：公式写的是 `FACTOR · (t / S)`，不是
+/// `(FACTOR · t) / S`。两者在常态量级上只差 1 ulp 以内，但 t 是次正规数时
+/// `FACTOR · t` 会先下溢成 0（`FACTOR · 5e-324 = 1.2e-324 → 0`），
+/// `0 / S = 0`，于是 `R(S, S)` 变成 `pow(1, -0.5) = 1.0` —— 定义性不变量在
+/// 最小次正规数上破 10 个百分点。先除后乘时 `t / S = 1` 精确，
+/// `R(S, S) = pow(1 + FACTOR, -0.5) = 0.9` 逐位成立
+/// （`src/fsrs_curve_exact_test.mbt` 锁定 12 个量级 + 1000 个步进值）。
 pub fn forgetting_curve(t : Double, s : Double) -> Double {
   if s <= 0.0 {
     return 1.0
   }
   let tt = if t < 0.0 { 0.0 } else { t }
-  clamp_retrievability(@math.pow(1.0 + factor * tt / s, decay))
+  clamp_retrievability(@math.pow(1.0 + factor * (tt / s), decay))
 }
 
 ///|
