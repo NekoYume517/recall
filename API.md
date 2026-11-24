@@ -927,6 +927,14 @@ recall replay --log bad.jsonl --json > out.json   # out.json = "数据错误: �
 `Ref` 暴露（`stdout_sink` / `stderr_sink`），白盒测试替换它们来断言分流，
 见 `cmd/recall/cli_stream_split_wbtest.mbt`。
 
+**控制台表格净化（第十七轮审计 F2）**：卡号来自日志，是**不可信数据**。
+`stats` / `replay` / `compare` 的表格单元格一律过 `cell_text`：`\n` `\r` `\t`
+转义成 `\n` `\r` `\t` 字面量，其余 C0/C1 控制字符（`< 0x20`、`0x7F..0x9F`，
+含 `ESC`）写成 `\uXXXX`，列宽按转义后的长度算。于是「一张卡一行」与列对齐
+都是可依赖的，ANSI 序列也不会改写终端。三个输出出口各有守卫：`--json` 走
+`Json::string`、`--anki` 走 CSV 引号规则、控制台表格走 `cell_text`
+（`cmd/recall/table_cell_escape_wbtest.mbt` 锁定）。
+
 
 `--json` / `--anki` 是布尔参数，**显式 `false` 生效**：`--json=false` / `--json=0`
 关掉 JSON（打印表格），`--json` / `--json=` / `--json=true` 开启（2026-11-17 审计）。

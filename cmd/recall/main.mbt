@@ -469,11 +469,55 @@ fn fmt_json_number(x : Double, digits : Int32) -> String {
 }
 
 ///|
-/// 左对齐、右侧补空格到 `width`。
-fn pad_right(s : String, width : Int32) -> String {
+/// 十六进制数字表（`cell_text` 用，避免 `Char` → 数字字符串的切片）。
+let cell_hex_digits : Array[String] = [
+  "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "A", "B", "C", "D", "E", "F",
+]
+
+///|
+/// 表格单元格净化：**日志文本是不可信数据**（第十七轮审计 F2）。
+///
+/// 卡号来自 `reviews.jsonl`——它可能由别的工具生成，Anki 卡号里带换行/制表符
+/// 并不稀奇。原样打进表格会破三件事：
+///
+///   1. 「一张卡一行」——`a\nb` 让 `stats` / `replay` / `compare` 多出一行，
+///      靠行数解析表格的脚本错位；
+///   2. 列宽——制表符跳到下一个 TAB 位，整行错位；
+///   3. 终端安全——`\u001B[2J` 这类 ANSI 序列能清屏、改色、伪造提示。
+///
+/// 所以控制字符转成可见形式（`\n` / `\r` / `\t` / `\uXXXX`），宽度按转义后的
+/// 长度算。三个输出出口各有各的守卫：`--json` 走 `Json::string` 转义、
+/// `--anki` 走 CSV 引号规则（`anki_escape_field`），这里是第三个——控制台表格。
+fn cell_text(s : String) -> String {
   let sb = StringBuilder()
-  sb.write_string(s)
-  let mut n = width - s.length()
+  for c in s.to_array() {
+    let v = c.to_int()
+    if c == '\n' {
+      sb.write_string("\\n")
+    } else if c == '\r' {
+      sb.write_string("\\r")
+    } else if c == '\t' {
+      sb.write_string("\\t")
+    } else if v < 0x20 || (v >= 0x7F && v <= 0x9F) {
+      sb.write_string("\\u")
+      sb.write_string(cell_hex_digits[(v >> 12) & 0xF])
+      sb.write_string(cell_hex_digits[(v >> 8) & 0xF])
+      sb.write_string(cell_hex_digits[(v >> 4) & 0xF])
+      sb.write_string(cell_hex_digits[v & 0xF])
+    } else {
+      sb.write_char(c)
+    }
+  }
+  sb.to_string()
+}
+
+///|
+/// 左对齐、右侧补空格到 `width`（宽度按 `cell_text` 转义后的长度算）。
+fn pad_right(s : String, width : Int32) -> String {
+  let cell = cell_text(s)
+  let sb = StringBuilder()
+  sb.write_string(cell)
+  let mut n = width - cell.length()
   while n > 0 {
     sb.write_string(" ")
     n = n - 1
@@ -482,15 +526,16 @@ fn pad_right(s : String, width : Int32) -> String {
 }
 
 ///|
-/// 右对齐、左侧补空格到 `width`。
+/// 右对齐、左侧补空格到 `width`（宽度按 `cell_text` 转义后的长度算）。
 fn pad_left(s : String, width : Int32) -> String {
+  let cell = cell_text(s)
   let sb = StringBuilder()
-  let mut n = width - s.length()
+  let mut n = width - cell.length()
   while n > 0 {
     sb.write_string(" ")
     n = n - 1
   }
-  sb.write_string(s)
+  sb.write_string(cell)
   sb.to_string()
 }
 
