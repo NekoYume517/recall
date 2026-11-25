@@ -142,13 +142,22 @@ pub fn ReviewEvent::overdue_days(self : ReviewEvent) -> Double {
 /// `grade_raw` 1 与 2（都是 Hard）、4 与 5（都是 Easy）被判为相等 ——
 /// 用 `ReviewLog::equal` 校验日志同一性的调用方会漏掉一整类差异，
 /// 而这正是 RJ-R / RJ-1b 当年修的那类保真缺陷。
+/// **`elapsed_days` 用「同值或同为 NaN」比较**（第十八轮审计）。浮点 `==`
+/// 使 `NaN == NaN` 恒假，于是 `equal(ev, ev)` 对带 NaN 的事件返回 false ——
+/// 相等关系不自反，用它做「日志同一性」校验的调用方会得到假阴性（两份完全
+/// 相同的日志被判为不同）。`NaN` 经构造器 `new_with_raw` 可达（它只夹负数），
+/// 因此不是理论分支。修复只补 NaN 这一种情形：`NaN` 与任何有限值仍不等，
+/// 语义不放宽。
 pub fn ReviewEvent::equal(a : ReviewEvent, b : ReviewEvent) -> Bool {
   a.card_id == b.card_id &&
   a.reviewed_at == b.reviewed_at &&
   a.due_at == b.due_at &&
   a.grade == b.grade &&
   a.grade_raw == b.grade_raw &&
-  a.elapsed_days == b.elapsed_days
+  (
+    a.elapsed_days == b.elapsed_days ||
+    (a.elapsed_days.is_nan() && b.elapsed_days.is_nan())
+  )
 }
 
 ///|
