@@ -285,16 +285,30 @@ fn increment_review_counter(n : Int32) -> Int32 {
 }
 
 ///|
+/// 浮点字段「同值或同为 NaN」的辅助谓词（第十八轮审计）。
+///
+/// 与 `ReviewEvent::equal` 的 NaN 修复同族：`CardState` 是 `pub(all)`，三个
+/// 浮点字段可以直接构造，API.md 第 6 节明确承认「手工构造的状态可以带
+/// `±Infinity` / `NaN`」。用裸 `==` 时 `NaN == NaN` 恒假，`equal(st, st)` 返回
+/// false —— 相等关系不自反，依赖它做逐帧对比 / 差异检查的调用方会假阴性。
+/// 只补 NaN 一种情形：NaN 与任何有限值（乃至 ±Infinity）仍不等，语义不放宽。
+fn same_or_both_nan(x : Double, y : Double) -> Bool {
+  x == y || (x.is_nan() && y.is_nan())
+}
+
+///|
 /// 状态相等（CardState 只有 derive(Debug)，逐字段手写比较）。
-/// 浮点用精确比较：状态由确定性算法产生，不需要容差。
+///
+/// **浮点字段用「同值或同为 NaN」**（见 `same_or_both_nan` 的说明）；整数、
+/// 时间戳与枚举照旧精确比较——状态由确定性算法产生，不需要容差。
 pub fn CardState::equal(a : CardState, b : CardState) -> Bool {
   a.card_id == b.card_id &&
-  a.stability == b.stability &&
-  a.difficulty == b.difficulty &&
+  same_or_both_nan(a.stability, b.stability) &&
+  same_or_both_nan(a.difficulty, b.difficulty) &&
   a.reps == b.reps &&
   a.lapses == b.lapses &&
   a.last_review == b.last_review &&
   a.due == b.due &&
-  a.interval_days == b.interval_days &&
+  same_or_both_nan(a.interval_days, b.interval_days) &&
   a.phase == b.phase
 }
