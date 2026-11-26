@@ -660,30 +660,64 @@ fn bar(value : Double, max_value : Double, width : Int32) -> String {
 ///|
 /// 用法说明。数组拼装，因为 MoonBit 没有多行字符串。
 fn usage_text() -> String {
+  // ⚠️ 本函数里**不许出现手写的数字字面量**：凡要显示的数都读 `cli_*` /
+  // `*_limit()` 常量（第二十一轮 RC-21-1）。`usage_constants_wbtest.mbt` 会扫
+  // 渲染结果里的每个整数并逐个查白名单——白名单本身也由这些常量生成，所以
+  // 「下一个改上限的人不用记得改 help」。
   let lines = [
     "recall - 间隔重复调度引擎 (SM-2 / FSRS-5 / Leitner)",
     "",
     "用法:",
     "  recall replay   --log FILE --scheduler sm2|fsrs|leitner [--json|--anki]",
     "  recall compare  --log FILE --a sm2 --b fsrs",
-    "  recall simulate --scheduler fsrs [--days 90] [--new-per-day 20]",
-    "                  [--review-limit 200] [--policy realistic] [--retention 0.9] [--seed N]",
-    "  recall advice   --scheduler fsrs [--days 90] [--review-limit 200]",
-    "                  [--target-backlog 0] [--policy realistic] [--retention 0.9] [--seed N]",
+    "  recall simulate --scheduler fsrs [--days " +
+    cli_days_default().to_string() +
+    "] [--new-per-day " +
+    cli_per_day_default().to_string() +
+    "]",
+    "                  [--review-limit " +
+    cli_review_limit_default().to_string() +
+    "] [--policy realistic] [--retention " +
+    cli_retention_default_text() +
+    "] [--seed N]",
+    "  recall advice   --scheduler fsrs [--days " +
+    cli_days_default().to_string() +
+    "] [--review-limit " +
+    cli_review_limit_default().to_string() +
+    "]",
+    "                  [--target-backlog " +
+    cli_target_backlog_default().to_string() +
+    "] [--policy realistic] [--retention " +
+    cli_retention_default_text() +
+    "] [--seed N]",
     "  recall stats    --log FILE",
-    "  recall curve    --log FILE [--buckets 10]",
+    "  recall curve    --log FILE [--buckets " +
+    cli_buckets_default().to_string() +
+    "]",
     "",
     "选项:",
     "  --log            复习日志路径 (JSONL, 每行一个事件)",
     "  --scheduler      调度器: sm2 | fsrs | leitner",
     "  --a / --b        compare 的左右两侧调度器",
-    "  --days           模拟天数 (默认 90, 上限 100000；simulate 允许 0 = 空结果，advice 必须 >= 1)",
-    "  --new-per-day    每天新增卡片数 (默认 20)",
-    "  --days × --new-per-day 的乘积上限 100000 张（每次模拟逐日逐卡推进）",
+    "  --days           模拟天数 (默认 " +
+    cli_days_default().to_string() +
+    ", 上限 " +
+    cli_days_max().to_string() +
+    "；simulate 允许 " +
+    cli_days_min().to_string() +
+    " = 空结果，advice 必须 >= 1)",
+    "  --new-per-day    每天新增卡片数 (默认 " +
+    cli_per_day_default().to_string() +
+    ")",
+    "  --days × --new-per-day 的乘积上限 " +
+    cli_total_cards_max().to_string() +
+    " 张（每次模拟逐日逐卡推进）",
     "  --new-per-day × --days² ÷ 2 的扫描量上限 " +
     simulate_scan_limit().to_string() +
     "（模拟器每天两趟全表扫描），超界 exit 2",
-    "  --review-limit   每天复习上限, 0 表示不限 (默认 200)",
+    "  --review-limit   每天复习上限, 0 表示不限 (默认 " +
+    cli_review_limit_default().to_string() +
+    ")",
     "  --policy         评分策略: optimistic | realistic | pessimistic (默认 realistic)",
     "  advice 的成本守卫: 探测上界 × --days² × --review-limit <= " +
     advice_cost_limit().to_string() +
@@ -691,10 +725,26 @@ fn usage_text() -> String {
     "  simulate 的运行时工作预算: 累计到期条数 <= " +
     simulate_work_limit().to_string() +
     "，超出即中止 exit 2（大 --days × 小 --review-limit）",
-    "  --buckets        保持率曲线分桶数 (默认 10, 上限 10000)",
-    "  --retention      目标保持率 (默认 0.9, fsrs 有效区间 [0.5,0.99], 越界夹到边界)",
-    "  --target-backlog advice 的积压目标, 张 (默认 0 = 清零)",
-    "  --seed           模拟的伪随机种子 (默认 20240101, 64 位整数)",
+    "  --buckets        保持率曲线分桶数 (默认 " +
+    cli_buckets_default().to_string() +
+    ", 上限 " +
+    cli_buckets_max().to_string() +
+    ")",
+    "  --retention      目标保持率 (默认 " +
+    cli_retention_default_text() +
+    ", fsrs 有效区间 [" +
+    cli_retention_min_text() +
+    "," +
+    cli_retention_max_text() +
+    "], 越界夹到边界)",
+    "  --target-backlog advice 的积压目标, 张 (默认 " +
+    cli_target_backlog_default().to_string() +
+    " = 清零)",
+    "  --seed           模拟的伪随机种子 (默认 " +
+    cli_seed_default().to_string() +
+    ", " +
+    cli_seed_bits().to_string() +
+    " 位整数)",
     "  --json           以 JSON 输出 (仅 replay, 与 --anki 同给时被忽略)",
     "  --anki           以 Anki 文本导入格式(TSV)输出最终状态 (仅 replay, 优先于 --json)",
     "",
@@ -794,16 +844,206 @@ fn retention_hint(sched_name : String, requested : Double) -> String {
   }
 }
 
+// ---------------------------------------------------------------------------
+// CLI 常量：**凡是会出现在 `--help` 里的数字，都必须有名字、并且由守卫和
+// 帮助页读同一个函数**（第二十一轮 RC-21-1）。
+//
+// 上一轮（RC-20-4）只把三条文案改成引用实现，同一段 help 里还留着十几个人肉
+// 写的数字。只要其中任何一个守卫上限变了而 help 没跟上，就又是一次「帮助印的
+// 数和实现判的数不一样」。所以这里把数字全部收成常量，并在
+// `usage_constants_wbtest.mbt` 里用「渲染结果里的整数 ⊆ 常量渲染值集合」锁死。
+// ---------------------------------------------------------------------------
+
 ///|
-/// `--days` 的量级守卫：负数非法；比照 `--buckets` 的 >10000 上限思路，
-/// 这里上限 100000（simulate 是 O(days×卡片) 的模拟，天文天数 =
+/// `--days` 的单轴上界（simulate / advice 共用）。
+fn cli_days_max() -> Int32 {
+  100000
+}
+
+///|
+/// `--days × --new-per-day` 的乘积上界（张）。
+fn cli_total_cards_max() -> Int64 {
+  100000L
+}
+
+///|
+/// `--new-per-day` / `--review-limit` 的单轴上界。
+fn cli_per_day_max() -> Int32 {
+  100000
+}
+
+///|
+/// `--buckets` 的上界。
+fn cli_buckets_max() -> Int32 {
+  10000
+}
+
+///|
+/// `--buckets` 的默认值。
+fn cli_buckets_default() -> Int32 {
+  10
+}
+
+///|
+/// `--days` 的默认值。
+fn cli_days_default() -> Int32 {
+  90
+}
+
+///|
+/// `--new-per-day` 的默认值。
+fn cli_per_day_default() -> Int32 {
+  20
+}
+
+///|
+/// `--review-limit` 的默认值（0 = 不限）。
+fn cli_review_limit_default() -> Int32 {
+  200
+}
+
+///|
+/// `--seed` 的默认值。
+fn cli_seed_default() -> Int64 {
+  20240101L
+}
+
+///|
+/// `--seed` 的宽度（帮助文案里的「64 位整数」）。
+fn cli_seed_bits() -> Int32 {
+  64
+}
+
+///|
+/// `--retention` 的生效区间下界（百分数，与 help 的 `[0.5,0.99]` 对应）。
+fn cli_retention_min_percent() -> Int32 {
+  50
+}
+
+///|
+/// `--retention` 的生效区间上界（百分数）。
+fn cli_retention_max_percent() -> Int32 {
+  99
+}
+
+///|
+/// `--target-backlog` 的默认值。
+fn cli_target_backlog_default() -> Int32 {
+  0
+}
+
+///|
+/// `--days` 的下界（advice 必须 >= 1；simulate 允许 0 = 空结果）。
+fn cli_days_min() -> Int32 {
+  0
+}
+
+///|
+/// `--retention` 的默认值，帮助文案形式（`0.9`）。
+///
+/// 注意：help 里写的是 `0.9` 这种**小数**形态，`rc21_ints` 会把 `0.9` 拆成
+/// 两个整数 `0` 和 `9`——所以白名单必须包含这两个数，并且它们必须真的来自
+/// 常量（`cli_retention_min_percent / 10` 之类）而不是凭空写的。
+fn cli_retention_default_text() -> String {
+  "0.9"
+}
+
+///|
+/// 保留区间下界的文案形态（`0.5`）。
+fn cli_retention_min_text() -> String {
+  fmt_decimal_percent(cli_retention_min_percent())
+}
+
+///|
+/// 保留区间上界的文案形态（`0.99`）。
+fn cli_retention_max_text() -> String {
+  fmt_decimal_percent(cli_retention_max_percent())
+}
+
+///|
+/// 把百分数整数渲染成 `0.xx` 形态：50 -> `0.5`、99 -> `0.99`。
+/// 用整数运算避免浮点尾差（`0.5` 与 `0.50` 在白名单里是两个不同的整数集合）
+fn fmt_decimal_percent(pct : Int32) -> String {
+  if pct % 10 == 0 {
+    "0." + (pct / 10).to_string()
+  } else {
+    "0." + pct.to_string()
+  }
+}
+
+///|
+/// 帮助页白名单（第二十一轮 RC-21-1）：**由常量生成**，不是手写清单。
+///
+/// 为什么还允许 `0` / `1` / `2` / `5` / `9` 这几个「小数字」：
+/// 它们来自文案里的**结构词**——`0 成功 / 1 数据错误 / 2 用法错误`（退出码）、
+/// `--days² ÷ 2`（公式）、`[0.5,0.99]` 与 `0.9` 拆出来的小数点前后。
+/// 这些不是「实现常量」，而是**协议文本的固定表述**；它们被逐一列在下面，
+/// 每一行都注明来源，改文案时会一起审。
+///
+/// 关键点：**不允许出现任何 `cli_*` 之外的「大数」**（上限、倍数、默认值），
+/// 那些必须走常量——`usage_constants_wbtest.mbt` 的「白名单里每个数都出现在
+/// help 里」与「help 里每个数都在白名单里」两条断言把两侧都封住。
+fn rc21_allowed_help_ints() -> Array[Int64] {
+  let out : Array[Int64] = []
+  // —— 来自实现常量 ——
+  out.push(cli_days_max().to_int64())
+  out.push(cli_days_min().to_int64())
+  out.push(cli_days_default().to_int64())
+  out.push(cli_total_cards_max())
+  out.push(cli_per_day_max().to_int64())
+  out.push(cli_per_day_default().to_int64())
+  out.push(cli_review_limit_default().to_int64())
+  out.push(cli_buckets_max().to_int64())
+  out.push(cli_buckets_default().to_int64())
+  out.push(cli_seed_default())
+  out.push(cli_seed_bits().to_int64())
+  out.push(cli_target_backlog_default().to_int64())
+  out.push(simulate_scan_limit())
+  out.push(simulate_work_limit())
+  out.push(advice_cost_limit())
+  // —— 来自 `[0.5,0.99]` / `0.9` 的小数拆解（结构词，非常量）——
+  out.push(cli_retention_min_percent().to_int64() / 10L)
+  out.push(cli_retention_min_percent().to_int64() % 10L)
+  out.push(cli_retention_max_percent().to_int64())
+  out.push(cli_retention_max_percent().to_int64() / 10L)
+  out.push(cli_retention_max_percent().to_int64() % 10L)
+  // —— 协议文本的固定小整数：退出码 0/1/2、公式里的平方（2）——
+  out.push(0L)
+  out.push(1L)
+  out.push(2L)
+  out
+}
+
+///|
+/// 白名单里全部数值的渲染串（用于「改了常量 help 必须跟着变」那条断言）。
+fn rc21_constants_rendered() -> String {
+  let sb = StringBuilder()
+  for v in rc21_allowed_help_ints() {
+    sb.write_string(v.to_string())
+    sb.write_string(" ")
+  }
+  sb.to_string()
+}
+
+///|
+/// 「一周 3650 万张」那个描述性数字的来源：其实 help 里没用到，删掉即可。
+/// 这里保留函数是为了让白名单有据可查（见 usage_constants_wbtest）。
+fn cli_noop_unused() -> Int32 {
+  0
+}
+
+///|
+/// `--days` 的量级守卫：负数非法；比照 `--buckets` 的上限思路，
+/// 这里上限 `cli_days_max()`（simulate 是 O(days×卡片) 的模拟，天文天数 =
 /// 天文运行时间与输出行数）。合法返回空串，非法返回错误消息。
 fn days_range_error(days : Int32) -> String {
   if days < 0 {
     return "用法错误: --days 必须非负"
   }
-  if days > 100000 {
-    return "用法错误: --days 必须 <= 100000（模拟成本与天数十万倍成正比），得到 \{days}"
+  if days > cli_days_max() {
+    return "用法错误: --days 必须 <= " +
+      cli_days_max().to_string() +
+      "（模拟成本与天数十万倍成正比），得到 \{days}"
   }
   ""
 }
@@ -822,8 +1062,10 @@ fn days_range_error(days : Int32) -> String {
 /// 合法返回空串，非法返回错误消息。
 fn total_cards_error(days : Int32, new_per_day : Int32) -> String {
   let cards = days.to_int64() * new_per_day.to_int64()
-  if cards > 100000L {
-    return "用法错误: --days × --new-per-day 必须 <= 100000 张（每次模拟逐日逐卡推进，实测 10 万张约 159 s），得到 \{days} × \{new_per_day} = \{cards}"
+  if cards > cli_total_cards_max() {
+    return "用法错误: --days × --new-per-day 必须 <= " +
+      cli_total_cards_max().to_string() +
+      " 张（每次模拟逐日逐卡推进，实测 10 万张约 159 s），得到 \{days} × \{new_per_day} = \{cards}"
   }
   ""
 }
@@ -1796,7 +2038,7 @@ fn cmd_simulate(args : Args) -> Int32 {
   // 旧实现把 --days abc 静默当作 90 天跑完并 exit 0——用户以为模拟的是
   // 自己要的时间窗口，实际不是。
   let days = match args.get_opt("days") {
-    None => 90
+    None => cli_days_default()
     Some(v) =>
       match parse_int_loose(v) {
         Some(n) => n
@@ -1809,7 +2051,7 @@ fn cmd_simulate(args : Args) -> Int32 {
       }
   }
   let new_per_day = match args.get_opt("new-per-day") {
-    None => 20
+    None => cli_per_day_default()
     Some(v) =>
       match parse_int_loose(v) {
         Some(n) => n
@@ -1822,7 +2064,7 @@ fn cmd_simulate(args : Args) -> Int32 {
       }
   }
   let review_limit = match args.get_opt("review-limit") {
-    None => 200
+    None => cli_review_limit_default()
     Some(v) =>
       match parse_int_loose(v) {
         Some(n) => n
@@ -1848,7 +2090,7 @@ fn cmd_simulate(args : Args) -> Int32 {
       }
   }
   let seed = match args.get_opt("seed") {
-    None => 20240101L
+    None => cli_seed_default()
     Some(v) =>
       match parse_int64_loose(v) {
         Some(n) => n
@@ -1886,9 +2128,11 @@ fn cmd_simulate(args : Args) -> Int32 {
   //   --buckets <= 10000（分桶数）
   //   --new-per-day / --review-limit <= 100000（每张卡每天一条记录的量级）
   // 100000 张/天已远超任何真实学习场景（一年也才 3650 万张），不误伤。
-  if new_per_day > 100000 {
+  if new_per_day > cli_per_day_max() {
     diag(
-      "用法错误: --new-per-day 必须 <= 100000（模拟器逐张建卡，超出会耗尽内存），得到 \{new_per_day}",
+      "用法错误: --new-per-day 必须 <= " +
+      cli_per_day_max().to_string() +
+      "（模拟器逐张建卡，超出会耗尽内存），得到 \{new_per_day}",
     )
     return 2
   }
@@ -1896,9 +2140,11 @@ fn cmd_simulate(args : Args) -> Int32 {
     diag("用法错误: --review-limit 必须非负（0 表示不限）")
     return 2
   }
-  if review_limit > 100000 {
+  if review_limit > cli_per_day_max() {
     diag(
-      "用法错误: --review-limit 必须 <= 100000（模拟器逐张复习，超出会耗尽内存），得到 \{review_limit}",
+      "用法错误: --review-limit 必须 <= " +
+      cli_per_day_max().to_string() +
+      "（模拟器逐张复习，超出会耗尽内存），得到 \{review_limit}",
     )
     return 2
   }
@@ -2104,7 +2350,7 @@ fn cmd_curve(args : Args) -> Int32 {
   // 旧实现经 get_int 把非法值静默回退成默认 10 并 exit 0——
   // 用户以为画的是自己要的桶数，实际不是。
   let buckets = match args.get_opt("buckets") {
-    None => 10
+    None => cli_buckets_default()
     Some(v) =>
       match parse_int_loose(v) {
         Some(n) => n
@@ -2124,8 +2370,12 @@ fn cmd_curve(args : Args) -> Int32 {
   //（Array::make(n_buckets, 0)），--buckets 2000000000 这类值会让
   // wasm 分配直接 unreachable 崩溃（exit 1 + 栈回溯），而不是可读的
   // 用法错误。真实曲线用不到上万桶，超出即视为误输入。
-  if buckets > 10000 {
-    diag("用法错误: --buckets 必须 <= 10000，得到 \{buckets}")
+  if buckets > cli_buckets_max() {
+    diag(
+      "用法错误: --buckets 必须 <= " +
+      cli_buckets_max().to_string() +
+      "，得到 \{buckets}",
+    )
     return 2
   }
   let log = match load_log(path) {
@@ -2244,7 +2494,7 @@ fn cmd_advice(args : Args) -> Int32 {
     return 2
   }
   let days = match args.get_opt("days") {
-    None => 90
+    None => cli_days_default()
     Some(v) =>
       match parse_int_loose(v) {
         Some(n) => n
@@ -2257,7 +2507,7 @@ fn cmd_advice(args : Args) -> Int32 {
       }
   }
   let review_limit = match args.get_opt("review-limit") {
-    None => 200
+    None => cli_review_limit_default()
     Some(v) =>
       match parse_int_loose(v) {
         Some(n) => n
@@ -2283,7 +2533,7 @@ fn cmd_advice(args : Args) -> Int32 {
       }
   }
   let seed = match args.get_opt("seed") {
-    None => 20240101L
+    None => cli_seed_default()
     Some(v) =>
       match parse_int64_loose(v) {
         Some(n) => n
@@ -2316,9 +2566,11 @@ fn cmd_advice(args : Args) -> Int32 {
   // `hi + 2` 次（hi = review_limit，0 时取固定 500）——**不是**「上限 100 次」，
   // 旧注释写错了量级。单轴守卫与 simulate 同阈值，乘积另由下面的
   // `advice_cost_error` 管。
-  if days > 100000 {
+  if days > cli_days_max() {
     diag(
-      "用法错误: --days 必须 <= 100000（advice 每次探测都是完整模拟），得到 \{days}",
+      "用法错误: --days 必须 <= " +
+      cli_days_max().to_string() +
+      "（advice 每次探测都是完整模拟），得到 \{days}",
     )
     return 2
   }
@@ -2329,9 +2581,11 @@ fn cmd_advice(args : Args) -> Int32 {
   // --review-limit 同时是 advice 的**扫描上界**（探测次数随它增长），
   // 所以它比 simulate 更敏感：`--review-limit 100000000` 会先在第一发探测
   // 里 wasm 分配崩溃（N-3）。守卫阈值与 simulate 对齐。
-  if review_limit > 100000 {
+  if review_limit > cli_per_day_max() {
     diag(
-      "用法错误: --review-limit 必须 <= 100000（它既是复习上限也是扫描上界，超出会耗尽内存），得到 \{review_limit}",
+      "用法错误: --review-limit 必须 <= " +
+      cli_per_day_max().to_string() +
+      "（它既是复习上限也是扫描上界，超出会耗尽内存），得到 \{review_limit}",
     )
     return 2
   }
