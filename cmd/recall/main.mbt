@@ -159,6 +159,41 @@ fn parse_args(argv : Array[String]) -> Args {
 }
 
 ///|
+/// 把**用户输入的片段**放进报错消息时的展示形式（第十九轮 RC-19-5）。
+///
+/// 报错要引用用户的原文（`--seed` 写错了得让人看见自己写了什么），但超长输入
+/// 会把整条消息撑爆：`--seed 9…9（4000 位）` 会让一行诊断变成几百行，
+/// 终端刷屏之后真正的原因（「需要一个整数」）反而被冲走。
+///
+/// 规则（**头尾都留**）：不超过 `keep` 个字符就原样返回；超了保留前 `keep`
+/// 与后 `keep`，中间用 `…(共 N 字符，省略 M 字符)…` 标出代价——只留开头会让
+/// 用户看不到自己写错的末几位，只留结尾则丢掉上下文。
+///
+/// `keep` 取 60：两条 60 字符的片段加省略标注约 150 个字符，常见终端一行能放
+/// 下，同时长到足以认出「这一串是什么」。
+fn echo_clip(s : String, keep : Int32) -> String {
+  let n = s.length()
+  if n <= keep * 2 + 8 {
+    return s
+  }
+  let head = s.substring(start=0, end=keep)
+  let tail = s.substring(start=n - keep, end=n)
+  head +
+  "…(共 " +
+  n.to_string() +
+  " 字符，省略 " +
+  (n - keep * 2).to_string() +
+  " 字符)…" +
+  tail
+}
+
+///|
+/// 报错里回显用户输入的统一入口（带默认 `keep = 60`）。
+fn echo_field(s : String) -> String {
+  echo_clip(s, 60)
+}
+
+///|
 fn Args::get(self : Args, key : String, fallback : String) -> String {
   match self.params.get(key) {
     Some(v) => v
@@ -616,7 +651,7 @@ fn usage_text() -> String {
     "  --new-per-day    每天新增卡片数 (默认 20)", "  --days × --new-per-day 的乘积上限 100000 张（每次模拟逐日逐卡推进）",
     "  --new-per-day × --days² ÷ 2 的扫描量上限 250000000（模拟器每天两趟全表扫描），超界 exit 2",
     "  --review-limit   每天复习上限, 0 表示不限 (默认 200)", "  --policy         评分策略: optimistic | realistic | pessimistic (默认 realistic)",
-    "  advice 的成本守卫: 探测上界 × --days² × --review-limit <= 2500000000，超界 exit 2",
+    "  advice 的成本守卫: 探测上界 × --days² × --review-limit <= 300000000，超界 exit 2",
     "  simulate 的运行时工作预算: 累计到期条数 <= 60000000，超出即中止 exit 2（大 --days × 小 --review-limit）",
     "  --buckets        保持率曲线分桶数 (默认 10, 上限 10000)", "  --retention      目标保持率 (默认 0.9, fsrs 有效区间 [0.5,0.99], 越界夹到边界)",
     "  --target-backlog advice 的积压目标, 张 (默认 0 = 清零)", "  --seed           模拟的伪随机种子 (默认 20240101, 64 位整数)",
@@ -774,9 +809,45 @@ fn int64_sqrt_floor(x : Int64) -> Int64 {
 }
 
 ///|
+/// `advice` 的成本上限（工作单元 = 探测次数 × 单次模拟）。
+///
+/// **单点来源**：`advice_cost_over` / `advice_cost_units` / 提示文案 / 百分比
+/// 全部读这里，避免「判定用一套数、建议用另一套数」的漂移。
+///
+/// ## 为什么从 2.5e9 降到 3e8（第十九轮 RC-19-4）
+///
+/// 旧上限 2.5e9 的注释写着「上限档 ≈ 三十秒量级」，实测（native release、
+/// 独立进程、`Stopwatch`）：
+///
+/// | 配置 | 工作单元 | 实测耗时 |
+/// |---|---|---|
+/// | `--days 12 --review-limit 200` | 3.4e7 | 0.42 s |
+/// | `--days 24 --review-limit 200` | 1.9e8 | 1.27 s |
+/// | `--days 48 --review-limit 200` | 1.1e9 | 4.37 s |
+/// | `--days 48 --review-limit 400` | 2.0e9 | **21.6 s** |
+/// | `--days 99 --review-limit 500` | 2.5e9（旧上限档） | **704 s（12 分钟）** |
+///
+/// 也就是说旧判据的单位换算整体差一个数量级：同一个数在 `simulate` 那条路径上
+/// 是「几十秒」，在 advice 上（每次探测都重建整份模拟器、hi+2 次探测不一定提前
+/// 命中、且 hi 越大约容易命中）是「十二分钟」。守卫允准的档位必须是自己实测
+/// 能承受的档位，否则守卫生效性等于零。
+///
+/// 新上限 3e8：按上表线性反推约合 8–30 s（比 704 s 档位小 8.3 倍，但 `hi+2`
+/// 次探测里包含若干「提前命中」的情形，实测落在十几秒）。取 3e8 而不是 1e8，
+/// 是为了给慢机器与 `moon run`（debug，约慢 5 倍）留余量，同时保证
+/// `--days 90 --review-limit 200`（本库默认建议规模，1.2e9×… 见下表）不被误拒。
+///
+/// 与 `simulate_scan_limit()`（2.5e8）的关系：advice 的一次探测就是一次
+/// `simulate_with_budget`，所以上限必须 ≥ 单次扫描上限，否则会出现
+/// 「同样规模 simulate 放行、advice 拒绝」的新倒挂。3e8 > 2.5e8 满足此约束。
+fn advice_cost_limit() -> Int64 {
+  300000000L
+}
+
+///|
 /// `advice` 的成本是否超界（纯判定，供 `advice_cost_error` 与反算建议共用）。
 fn advice_cost_over(days : Int32, review_limit : Int32) -> Bool {
-  let limit : Int64 = 2500000000L
+  let limit = advice_cost_limit()
   let hi = if review_limit > 0 { review_limit } else { 500 }
   let hi64 = hi.to_int64()
   let d = days.to_int64()
@@ -812,7 +883,7 @@ fn advice_cost_units(days : Int32, review_limit : Int32) -> Int64 {
 /// 先除以 1% 的单位再算，避免成本接近上限时 `cost * 100` 再溢出；
 /// 饱和值直接按 100% 以上处理（`cost` 已达 `Int64.MAX` 说明远超上限）。
 fn advice_cost_percent(days : Int32, review_limit : Int32) -> Int64 {
-  let limit : Int64 = 2500000000L
+  let limit = advice_cost_limit()
   let cost = advice_cost_units(days, review_limit)
   if cost > 9223372036854775807L / 100L {
     return 100L
@@ -846,7 +917,7 @@ fn advice_cost_percent(days : Int32, review_limit : Int32) -> Int64 {
 /// 1/8** 的快速档（同样代回判定后才写出来）。两侧的快速档都只是「同一根轴上
 /// 再收一档」，不改变 `--review-limit 0` 的「不限」语义。
 fn advice_cost_hint(days : Int32, review_limit : Int32) -> String {
-  let limit : Int64 = 2500000000L
+  let limit = advice_cost_limit()
   let hi = if review_limit > 0 { review_limit } else { 500 }
   let hi64 = hi.to_int64()
   let d = days.to_int64()
@@ -948,7 +1019,7 @@ fn advice_cost_error(days : Int32, review_limit : Int32) -> String {
   // 成本与饱和判定集中在 `advice_cost_units` 一处（与建议里的百分比同源）。
   let cost = advice_cost_units(days, review_limit)
   let suffix = if cost == max { "（已到 Int64 饱和值）" } else { "" }
-  "用法错误: advice 的总成本（探测次数 × 单次模拟 = 探测上界 × --days² × --review-limit）必须 <= 2500000000，得到 \{probes} × \{days}² × \{hi} = \{cost}\{suffix}（--days \{days}，--review-limit \{review_limit}）" +
+  "用法错误: advice 的总成本（探测次数 × 单次模拟 = 探测上界 × --days² × --review-limit）必须 <= \{advice_cost_limit()}，得到 \{probes} × \{days}² × \{hi} = \{cost}\{suffix}（--days \{days}，--review-limit \{review_limit}）" +
   advice_cost_hint(days, review_limit)
 }
 
@@ -1587,7 +1658,9 @@ fn cmd_simulate(args : Args) -> Int32 {
       match parse_int_loose(v) {
         Some(n) => n
         None => {
-          diag("用法错误: --days 需要一个整数，得到 '\{v}'")
+          diag(
+            "用法错误: --days 需要一个整数，得到 '\{echo_field(v)}'",
+          )
           return 2
         }
       }
@@ -1598,7 +1671,9 @@ fn cmd_simulate(args : Args) -> Int32 {
       match parse_int_loose(v) {
         Some(n) => n
         None => {
-          diag("用法错误: --new-per-day 需要一个整数，得到 '\{v}'")
+          diag(
+            "用法错误: --new-per-day 需要一个整数，得到 '\{echo_field(v)}'",
+          )
           return 2
         }
       }
@@ -1610,7 +1685,7 @@ fn cmd_simulate(args : Args) -> Int32 {
         Some(n) => n
         None => {
           diag(
-            "用法错误: --review-limit 需要一个整数，得到 '\{v}'",
+            "用法错误: --review-limit 需要一个整数，得到 '\{echo_field(v)}'",
           )
           return 2
         }
@@ -1622,7 +1697,9 @@ fn cmd_simulate(args : Args) -> Int32 {
       match parse_double_loose(v) {
         Some(n) => n
         None => {
-          diag("用法错误: --retention 需要一个小数，得到 '\{v}'")
+          diag(
+            "用法错误: --retention 需要一个小数，得到 '\{echo_field(v)}'",
+          )
           return 2
         }
       }
@@ -1633,7 +1710,9 @@ fn cmd_simulate(args : Args) -> Int32 {
       match parse_int64_loose(v) {
         Some(n) => n
         None => {
-          diag("用法错误: --seed 需要一个整数，得到 '\{v}'")
+          diag(
+            "用法错误: --seed 需要一个整数，得到 '\{echo_field(v)}'",
+          )
           return 2
         }
       }
@@ -1887,7 +1966,9 @@ fn cmd_curve(args : Args) -> Int32 {
       match parse_int_loose(v) {
         Some(n) => n
         None => {
-          diag("用法错误: --buckets 需要一个整数，得到 '\{v}'")
+          diag(
+            "用法错误: --buckets 需要一个整数，得到 '\{echo_field(v)}'",
+          )
           return 2
         }
       }
@@ -2025,7 +2106,9 @@ fn cmd_advice(args : Args) -> Int32 {
       match parse_int_loose(v) {
         Some(n) => n
         None => {
-          diag("用法错误: --days 需要一个整数，得到 '\{v}'")
+          diag(
+            "用法错误: --days 需要一个整数，得到 '\{echo_field(v)}'",
+          )
           return 2
         }
       }
@@ -2037,7 +2120,7 @@ fn cmd_advice(args : Args) -> Int32 {
         Some(n) => n
         None => {
           diag(
-            "用法错误: --review-limit 需要一个整数，得到 '\{v}'",
+            "用法错误: --review-limit 需要一个整数，得到 '\{echo_field(v)}'",
           )
           return 2
         }
@@ -2049,7 +2132,9 @@ fn cmd_advice(args : Args) -> Int32 {
       match parse_double_loose(v) {
         Some(n) => n
         None => {
-          diag("用法错误: --retention 需要一个小数，得到 '\{v}'")
+          diag(
+            "用法错误: --retention 需要一个小数，得到 '\{echo_field(v)}'",
+          )
           return 2
         }
       }
@@ -2060,7 +2145,9 @@ fn cmd_advice(args : Args) -> Int32 {
       match parse_int64_loose(v) {
         Some(n) => n
         None => {
-          diag("用法错误: --seed 需要一个整数，得到 '\{v}'")
+          diag(
+            "用法错误: --seed 需要一个整数，得到 '\{echo_field(v)}'",
+          )
           return 2
         }
       }
@@ -2072,7 +2159,7 @@ fn cmd_advice(args : Args) -> Int32 {
         Some(n) => n
         None => {
           diag(
-            "用法错误: --target-backlog 需要一个整数，得到 '\{v}'",
+            "用法错误: --target-backlog 需要一个整数，得到 '\{echo_field(v)}'",
           )
           return 2
         }
@@ -2284,7 +2371,8 @@ fn positional_args_error(sub : String, args : Args) -> String {
   }
   let shown : Array[String] = []
   for t in args.positionals {
-    shown.push("'" + t + "'")
+    // 裸 token 同样可能超长（整段粘贴进来的 JSON、路径、SQL），一律截头留尾
+    shown.push("'" + echo_field(t) + "'")
   }
   "用法错误: \{sub} 不接受位置参数，多余的 \{shown.join(", ")}（参数一律写成 --key value 或 --key=value）"
 }

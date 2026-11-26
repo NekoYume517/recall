@@ -15,13 +15,16 @@
 /// 记录在 `audit/2026-11-12/followup/REPORT.md`。
 
 ///|
-test "advice cost guard: 默认档与被接受的基线都放行" {
-  // 默认档（90 天 / 复习上限 200）：实测 31.8 s，必须仍然跑得动。
-  inspect(advice_cost_error(90, 200), content="")
-  // API.md §5.1 明文接受的 136 s 基线，不能反过来被新守卫拒掉。
-  inspect(advice_cost_error(90, 500), content="")
-  // `--review-limit 0`（不限）在 load_advice 里 hi 取固定 500，与上一档同形。
-  inspect(advice_cost_error(90, 0), content="")
+test "advice cost guard: 默认档放行，旧上限档被拒" {
+  // 提供方 builder 的默认档是 `advice --days 90 --review-limit 200`，工作单元
+  // 3.27e8，**刚好越过 3e8 上限**（第十九轮 RC-19-4）：改成建议的
+  // `--days 86`（2.99e8）实测 15.3 s，`--days 90` 实测 18.7 s —— 两档都能
+  // 承受，所以这里的判据是「不超过 30 秒档」而不是「默认参数必须放行」。
+  assert_true(advice_cost_error(90, 200).length() > 0)
+  inspect(advice_cost_error(86, 200), content="")
+  // 旧上限档（2.5e9）实测 119 s–704 s，必须被拒：守卫允准的档位要能承受。
+  assert_true(advice_cost_error(90, 500).length() > 0)
+  assert_true(advice_cost_error(90, 0).length() > 0)
   // 小预算仍是小预算。
   inspect(advice_cost_error(30, 200), content="")
   inspect(advice_cost_error(90, 1), content="")
@@ -46,10 +49,10 @@ test "advice cost guard: 乘积用 64 位计算，不在 Int32 边界绕成负�
 
 ///|
 test "advice cost guard: 边界按 `>` 判定，不误伤紧邻的合法值" {
-  // 248² × 40400 = 2484761600 <= 2.5e9：放行。
-  inspect(advice_cost_error(248, 200), content="")
-  // 249² × 40400 = 2504840400 > 2.5e9：拒绝。
-  assert_true(advice_cost_error(249, 200).length() > 0)
+  // 86² × 40400 = 2.99e8 <= 3e8：放行。
+  inspect(advice_cost_error(86, 200), content="")
+  // 87² × 40400 = 3.06e8 > 3e8：拒绝。
+  assert_true(advice_cost_error(87, 200).length() > 0)
 }
 
 ///|
@@ -65,20 +68,20 @@ test "advice cost guard: 极端乘积饱和成非负上界，不绕成负数" {
 test "advice cost guard: 拒绝消息给出按当前另一轴反算的可行值" {
   // R-7 同族：报错必须给能执行的下一步，否则用户只知道「超了」。
   let msg = advice_cost_error(5000, 200)
-  // 固定 --review-limit 200：--days 上界 = floor(sqrt(2.5e9 / (202×200))) = 248
-  assert_true(msg.contains("把 --days 降到 248 以内"))
-  // 固定 --days 5000：解 h² + 2h <= 2.5e9 / 5000² → h = 9
-  assert_true(msg.contains("把 --review-limit 降到 9 以内"))
+  // 固定 --review-limit 200：--days 上界 = floor(sqrt(3e8 / (202×200))) = 86
+  assert_true(msg.contains("把 --days 降到 86 以内"))
+  // 固定 --days 5000：解 h² + 2h <= 3e8 / 5000² → h = 2
+  assert_true(msg.contains("把 --review-limit 降到 2 以内"))
 }
 
 ///|
 test "advice cost guard: 建议值代回守卫必须真的通过，再大一点必须被拒" {
   // 「建议一个也会被拒的值」是这条修复最容易犯的错：两侧建议都代回判定。
-  inspect(advice_cost_error(248, 200), content="")
-  inspect(advice_cost_error(5000, 9), content="")
+  inspect(advice_cost_error(86, 200), content="")
+  inspect(advice_cost_error(5000, 2), content="")
   // 建议值必须是可行的**最大值**，否则建议白白保守。
-  assert_true(advice_cost_error(249, 200).length() > 0)
-  assert_true(advice_cost_error(5000, 10).length() > 0)
+  assert_true(advice_cost_error(87, 200).length() > 0)
+  assert_true(advice_cost_error(5000, 3).length() > 0)
 }
 
 ///|
@@ -86,11 +89,11 @@ test "advice cost guard: --review-limit 0 只建议减天数" {
   // 0 = 不限，hi 取固定 500。此时把 review-limit 改成具体值会改掉「不限」
   // 语义，所以不反算这一侧，如实说只能减 --days。
   let msg = advice_cost_error(5000, 0)
-  // floor(sqrt(2.5e9 / (502×500))) = 99
-  assert_true(msg.contains("把 --days 降到 99 以内"))
+  // floor(sqrt(3e8 / (502×500))) = 34
+  assert_true(msg.contains("把 --days 降到 34 以内"))
   assert_true(msg.contains("只能减 --days"))
   assert_false(msg.contains("把 --review-limit 降到"))
-  inspect(advice_cost_error(99, 0), content="")
+  inspect(advice_cost_error(34, 0), content="")
 }
 
 ///|
