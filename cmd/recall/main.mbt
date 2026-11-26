@@ -136,7 +136,7 @@ fn parse_args(argv : Array[String]) -> Args {
         None => ()
       }
       let has_next = i + 1 < argv.length()
-      if has_next && !argv[i + 1].has_prefix("--") {
+      if has_next && !argv[i + 1].has_prefix("--") && !is_bool_switch(body) {
         params[body] = argv[i + 1]
         flags.remove(body)
         i = i + 2
@@ -191,6 +191,28 @@ fn echo_clip(s : String, keep : Int32) -> String {
 /// 报错里回显用户输入的统一入口（带默认 `keep = 60`）。
 fn echo_field(s : String) -> String {
   echo_clip(s, 60)
+}
+
+///|
+/// **纯开关**（布尔）键的清单（第二十轮 RC-20-2）。
+///
+/// `parse_args` 看到 `--key` 时先判断「下一个 token 是不是以 `--` 开头」：
+/// 不是就当**值**收进 params，是就当 flag。这套规则对值形参数（`--log`、
+/// `--days`…）没问题，但对纯开关会把后面的**裸 token 静默吞成值**：
+///
+///     recall replay --json stray --log r.jsonl --scheduler fsrs
+///       -> exit 0，正常输出；`stray` 成了「--json 的值」被吃掉
+///     recall replay --log r.jsonl --scheduler fsrs stray
+///       -> exit 2「不接受位置参数，多余的 'stray'」
+///
+/// 同一类错法两种结果。更糟的是 flag 被提升成值形参数后，`Args::flag` 仍返回
+/// true（非空即真），所以**输出形态没变、错误也没报**。
+///
+/// 修法：把已知的开关清单下沉到解析层——这些键后面跟的裸 token 一律落进
+/// positionals（复用既有的「第五种报错形态」），不再被吞。
+/// 显式 `--json=false` / `--json=1` 走等号分支，语义不变。
+fn is_bool_switch(key : String) -> Bool {
+  key == "json" || key == "anki"
 }
 
 ///|
