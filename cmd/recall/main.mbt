@@ -974,43 +974,88 @@ fn fmt_decimal_percent(pct : Int32) -> String {
 ///|
 /// 帮助页白名单（第二十一轮 RC-21-1）：**由常量生成**，不是手写清单。
 ///
-/// 为什么还允许 `0` / `1` / `2` / `5` / `9` 这几个「小数字」：
-/// 它们来自文案里的**结构词**——`0 成功 / 1 数据错误 / 2 用法错误`（退出码）、
-/// `--days² ÷ 2`（公式）、`[0.5,0.99]` 与 `0.9` 拆出来的小数点前后。
-/// 这些不是「实现常量」，而是**协议文本的固定表述**；它们被逐一列在下面，
-/// 每一行都注明来源，改文案时会一起审。
+/// ## 判据
 ///
-/// 关键点：**不允许出现任何 `cli_*` 之外的「大数」**（上限、倍数、默认值），
-/// 那些必须走常量——`usage_constants_wbtest.mbt` 的「白名单里每个数都出现在
-/// help 里」与「help 里每个数都在白名单里」两条断言把两侧都封住。
+/// 「帮助里出现的每个整数」都必须能在这里找到来源。来源分两类：
+///
+/// **(A) 实现常量**——上限、默认值、预算。它们由 `cli_*` / `*_limit()` 提供，
+/// 改一个数 help 就跟着变。这一类**不需要人工判断**，加新数只需加常量。
+///
+/// **(B) 协议文本的固定表述**——这些数**不是**实现常量，而是文案本身的语法：
+/// 退出码的三个取值、公式里的「÷2」、`[0.5,0.99]` / `0.9` 里的小数点前后。
+/// 它们**不可能**「由实现推出」，因为它们是「怎么说话」而不是「说话的内容」。
+/// 这一类靠人工判断，所以下面**每一个都写明：为什么它不算实现常量、以及它变了
+/// 什么时候需要人重审**（Lead 裁决 2026-11-29：让下一个人能复核，
+/// **不许**为了自动化把「所有小整数」一律放行——那等于取消判据）。
+///
+/// ## 为什么不能用「把 0..9 全部放行」来省事
+///
+/// 那会让 `--days 上限 10000` 这种**改坏了的常量**也蒙混过关（10000 拆成
+/// 1+0+0+0+0，每个数字都 ≤ 9）。白名单必须比的是**整数**，不是字符。
 fn rc21_allowed_help_ints() -> Array[Int64] {
   let out : Array[Int64] = []
-  // —— 来自实现常量 ——
-  out.push(cli_days_max().to_int64())
-  out.push(cli_days_min().to_int64())
-  out.push(cli_days_default().to_int64())
-  out.push(cli_total_cards_max())
-  out.push(cli_per_day_max().to_int64())
-  out.push(cli_per_day_default().to_int64())
-  out.push(cli_review_limit_default().to_int64())
-  out.push(cli_buckets_max().to_int64())
-  out.push(cli_buckets_default().to_int64())
-  out.push(cli_seed_default())
-  out.push(cli_seed_bits().to_int64())
-  out.push(cli_target_backlog_default().to_int64())
-  out.push(simulate_scan_limit())
-  out.push(simulate_work_limit())
-  out.push(advice_cost_limit())
-  // —— 来自 `[0.5,0.99]` / `0.9` 的小数拆解（结构词，非常量）——
-  out.push(cli_retention_min_percent().to_int64() / 10L)
-  out.push(cli_retention_min_percent().to_int64() % 10L)
-  out.push(cli_retention_max_percent().to_int64())
-  out.push(cli_retention_max_percent().to_int64() / 10L)
-  out.push(cli_retention_max_percent().to_int64() % 10L)
-  // —— 协议文本的固定小整数：退出码 0/1/2、公式里的平方（2）——
-  out.push(0L)
-  out.push(1L)
-  out.push(2L)
+
+  // —— (A) 实现常量：改常量 help 自动跟随，无需人工判断 ——
+  //
+  // 每一项的来源都是 `usage_text()` 里的一处 `.to_string()` 拼接：
+  out.push(cli_days_max().to_int64()) // 「--days … 上限 N」「--days 必须 <= N」
+  out.push(cli_days_min().to_int64()) // 「simulate 允许 N = 空结果」
+  out.push(cli_days_default().to_int64()) // 「--days (默认 N)」与用例模板
+  out.push(cli_total_cards_max()) // 「--days × --new-per-day 的乘积上限 N 张」
+  out.push(cli_per_day_max().to_int64()) // 「--new-per-day / --review-limit 必须 <= N」
+  out.push(cli_per_day_default().to_int64()) // 「--new-per-day (默认 N)」
+  out.push(cli_review_limit_default().to_int64()) // 「--review-limit (默认 N)」
+  out.push(cli_buckets_max().to_int64()) // 「--buckets (默认 10, 上限 N)」
+  out.push(cli_buckets_default().to_int64()) // 同上
+  out.push(cli_seed_default()) // 「--seed (默认 N)」
+  out.push(cli_seed_bits().to_int64()) // 「N 位整数」
+  out.push(cli_target_backlog_default().to_int64()) // 「--target-backlog (默认 N)」
+  out.push(simulate_scan_limit()) // 「扫描量上限 N」
+  out.push(simulate_work_limit()) // 「累计到期条数 <= N」
+  out.push(advice_cost_limit()) // 「成本守卫 … <= N」
+
+  // —— (B1) `[0.5, 0.99]` 与 `0.9` 的小数拆解 ——
+  //
+  // 为什么不算实现常量：文案里写的是 **小数字符串** `0.9` / `0.5` / `0.99`，
+  // 而 `rc21_ints` 是按「连续数字串」切整数的，于是 `0.99` 会被读成 `0` 和 `99`
+  // 两个整数、`0.5` 读成 `0` 和 `5`。这些「整数」只是**小数点把词切开了**的产物，
+  // 不对应任何语义常量。
+  //
+  // 但**上下界本身是语义**（`cli_retention_min_percent` / `max_percent`），所以
+  // 这里刻意由那两个常量算出来（`/10` 与 `%10`），而不是硬写 0/5/9：
+  // 一旦有人把上界从 99 改成 95，`%10` 那项就从 9 变 5，白名单自动跟上。
+  //
+  // 复核时机：改 retention 语义区间时。改完后若 help 里出现新的「小数位数字」，
+  // 这里会红，提醒你确认那个数字是从哪来的。
+  out.push(cli_retention_min_percent().to_int64() / 10L) // `0.5` 的 0
+  out.push(cli_retention_min_percent().to_int64() % 10L) // `0.5` 的 5
+  out.push(cli_retention_max_percent().to_int64()) // `0.99` 的 99
+  out.push(cli_retention_max_percent().to_int64() / 10L) // `0.99` 的 0
+  out.push(cli_retention_max_percent().to_int64() % 10L) // `0.99` 的 9
+
+  // —— (B2) 退出码 0 / 1 / 2 ——
+  //
+  // 为什么不算实现常量：这不是「某个可以调的数」，而是**进程契约的三值域**：
+  // `0 成功 / 1 数据错误 / 2 用法错误`。它写在 `usage_text` 的最后一行，也写在
+  // 每一次 `@sys.exit(...)` 里。它「变」不是调参，而是**破坏接口**——那时候
+  // 不止这张白名单要改，全部调用方都要改。
+  //
+  // 复核时机：任何一次修改退出码语义（如引入第 3 个码）时。这条不会自动跟着变，
+  // **必须**手工加一行并同步 API.md 的退出码表。
+  out.push(0L) // exit 0 成功
+  out.push(1L) // exit 1 数据错误
+  out.push(2L) // exit 2 用法错误
+
+  // —— (B3) 公式里的 `2` ——
+  //
+  // 为什么不算实现常量：`--new-per-day × --days² ÷ 2 的扫描量上限` 里的 `2`
+  // 是「模拟器每天两趟全表扫描」这句话的**语法成分**（趟数），它是解释
+  // `simulate_scan_limit()` 为什么那样算的**说明**，本身不是可调参数——
+  // 真要改「每天扫几趟」，改的是模拟器循环，那时这句文案要重写，不是改个常量。
+  //
+  // 复核时机：`simulate` 的逐日循环结构变化时（例如从两趟并成一趟）。
+  out.push(2L) // 「每天两趟全表扫描」
+
   out
 }
 
