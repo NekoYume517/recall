@@ -22,11 +22,11 @@ moon version
 
 ```bash
 moon check
-moon test      # 691 个测试
+moon test      # 708 个测试
 moon build --target wasm
 ```
 
-预期：`Total tests: 691, passed: 691, failed: 0.`
+预期：`Total tests: 708, passed: 708, failed: 0.`
 
 > 这一行是**硬编码的期望值**：每加一条测试都要跟着改（2026-11-13 审计时它还停在
 > 482，比当时的 510 少 28 条——照着 DEMO 逐字比对会误判成回归；同日的追加轮补了
@@ -44,10 +44,9 @@ moon build --target wasm
 > replay 非有限显式间隔 2、advice `desired_retention` 3（含四入口逐卡到期日
 > 矩阵 1）、SM-2 `reps` 饱和分支 1、`--days 0` 库层 2 + CLI 2、
 > `retention_curve` O(1) 归桶边界 2。
-> 2026-11-27 第十九轮改到 **691**（+22）：`replay` 的间隔偏差计划值改取日志
-> `due_at`、补带符号偏差与逾期占比 4；CLI 解析阶段的用法错误收敛到 stderr、
-> `help` 判定提前 4；`--seed` 合法域补齐到 Int64 下界 4；`advice` 成本上限
-> 收紧到实测可承受档 4（双向判据 +2）；超长参数回显保留头尾 4。
+> 2026-11-27 第十九轮改到 **691**（+22）；2026-11-28 第二十轮改到 **708**（+17）：
+> advice 成本守卫改成机器无关的单元预算 4、跨算法字段语义 4、开关吞裸 token 2、
+> 同刻事件行序边界 2、帮助文案与实现同源 3，另加 2 条辅助断言；fmt/check 全绿。
 
 ## 二、核心产出：积压预测
 
