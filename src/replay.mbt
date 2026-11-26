@@ -25,6 +25,13 @@ pub(all) struct ReplayResult {
   total_lapses : Int32
   /// 平均间隔偏差：|实际间隔 − 上次调度给出的间隔| 的均值（天）
   interval_error_days : Double
+  /// **带符号**的平均间隔偏差：(`实际间隔 − 上次调度给出的间隔`) 的均值（天）。
+  /// 逾期为正、提前为负，与 `interval_error_days` 覆盖同一批样本
+  /// （第十九轮 RC-19-2：绝对值统计量看不见方向，"抵平"会被报成 4 天偏差）。
+  signed_interval_error_days : Double
+  /// 逾期复习占比 = 「实际间隔 > 上次计划间隔」的样本数 / 有间隔样本数。
+  /// 无样本时为 0。落在 [0,1]。
+  late_review_ratio : Double
 }
 
 ///|
@@ -49,6 +56,11 @@ pub fn[T : Scheduler] replay_with(log : ReviewLog, s : T) -> ReplayResult {
   // 变成 Infinity（CLI 打出来不是合法 JSON）。中间量恒落在 [0, max] 内。
   let mut error_mean = 0.0
   let mut error_count = 0
+  // 带符号的偏差均值，与上面同族、同一批样本（第十九轮 RC-19-2）。
+  // `interval_error_days` 是 |实际 − 计划|，方向无关；保守与激进两种调度
+  // 错误因此混在同一个非负数字里。这个字段保留方向：逾期为正、提前为负。
+  let mut signed_mean = 0.0
+  let mut late_count = 0
   for cid in card_ids {
     let events = match grouped.get(cid) {
       Some(v) => v
@@ -61,8 +73,30 @@ pub fn[T : Scheduler] replay_with(log : ReviewLog, s : T) -> ReplayResult {
     let mut prev_reviewed = first_at
     let mut has_prev = false
     for ev in events {
-      // 上次调度给出的间隔就是 state.interval_days（review 会覆写它，先存下来）
-      let scheduled = state.interval_days
+      // **上次调度给出的间隔**取日志里的 `due_at`（第十九轮 RC-19-2）。
+      //
+      // 旧实现取 `state.interval_days`——那是**重放到此刻的调度器自己算出的**
+      // 间隔，于是 `actual − scheduled` 恒等于「日志的实际间隔 − 调度器的理想
+      // 间隔」，`due_at` 一个字节都没参与：只把 `due_at` 挪 ±4 天，读数一动不动
+      // （实测恒等 2.00 天）。而结构体注释与 API.md 写的都是「上次调度给出的
+      // 间隔」，读者理解成 `due_at` 才是自然的。
+      //
+      // 新口径：`scheduled = (due_at − 上一条 reviewed_at) / 86400`，负数按 0
+      // 处理（`due_at` 早于上次复习 = 计划已过期，等价于"当天就该复习了"）。
+      // 首条事件没有前驱，只能用调度器初始化状态（日志里没有更早的计划值）。
+      let scheduled = if has_prev {
+        let planned = days_between(prev_reviewed, ev.due_at)
+        if planned > 0.0 {
+          planned
+        } else {
+          0.0
+        }
+      } else {
+        state.interval_days
+      }
+      // ⚠️ 这里必须**自己记录**上一条事件的时间戳：`ReviewEvent::new` 会把
+      // 间隔 < 1 天的 `due_at` 夹到 `reviewed_at`（等价「当天到期」），因此
+      // `prev_reviewed` 只能来自日志原文，不能用夹取后的计划值。
       state = s.review(state, ev.grade, ev.reviewed_at)
       // 实际间隔：优先用日志里**有限且 > 0** 的 elapsed_days（那是当时真实
       // 测量的值）；否则按同卡前驱时间戳回推。
@@ -90,6 +124,12 @@ pub fn[T : Scheduler] replay_with(log : ReviewLog, s : T) -> ReplayResult {
         error_count = error_count + 1
         error_mean = error_mean +
           (abs_diff - error_mean) / error_count.to_double()
+        signed_mean = signed_mean +
+          (diff - signed_mean) / error_count.to_double()
+        // 逾期判据与 `CardState::overdue_days` 同符号：实际 > 计划即逾期。
+        if diff > 0.0 {
+          late_count = late_count + 1
+        }
       }
       total_reviews = total_reviews + 1
       if ev.grade == Again {
@@ -110,6 +150,16 @@ pub fn[T : Scheduler] replay_with(log : ReviewLog, s : T) -> ReplayResult {
       0.0
     } else {
       error_mean
+    },
+    signed_interval_error_days: if error_count == 0 {
+      0.0
+    } else {
+      signed_mean
+    },
+    late_review_ratio: if error_count == 0 {
+      0.0
+    } else {
+      late_count.to_double() / error_count.to_double()
     },
   }
 }

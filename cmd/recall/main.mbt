@@ -1254,6 +1254,10 @@ fn cmd_replay(args : Args) -> Int32 {
     sb.write_string(res.total_lapses.to_string())
     sb.write_string(",\"interval_error_days\":")
     sb.write_string(fmt_json_number(res.interval_error_days, 4))
+    sb.write_string(",\"signed_interval_error_days\":")
+    sb.write_string(fmt_json_number(res.signed_interval_error_days, 4))
+    sb.write_string(",\"late_review_ratio\":")
+    sb.write_string(fmt_json_number(res.late_review_ratio, 4))
     sb.write_string(",\"final_intervals\":{")
     let mut first = true
     for cid in ids {
@@ -1283,6 +1287,13 @@ fn cmd_replay(args : Args) -> Int32 {
     emit(
       "平均间隔偏差: " + fmt_float(res.interval_error_days, 2) + " 天",
     )
+    // 第十九轮 RC-19-2：绝对值偏差看不出方向，补两行（逾期为正 / 提前为负）。
+    emit(
+      "带符号偏差:   " +
+      fmt_float(res.signed_interval_error_days, 2) +
+      " 天（逾期为正 / 提前为负）",
+    )
+    emit("逾期复习占比: " + fmt_pct(res.late_review_ratio))
     emit("")
     emit(
       pad_right("卡片", 12) +

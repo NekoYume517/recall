@@ -303,6 +303,8 @@ pub(all) struct ReplayResult {
   total_reviews : Int32
   total_lapses : Int32
   interval_error_days : Double
+  signed_interval_error_days : Double
+  late_review_ratio : Double
 }
 
 #derive(@debug.Debug)
