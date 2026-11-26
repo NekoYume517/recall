@@ -60,8 +60,12 @@ test "days_range_error: 负数与超上限都报用法错误" {
 test "parse_int64_loose: 接受 Int64 全域，拒绝越界与垃圾" {
   assert_eq(parse_int64_loose("20240101"), Some(20240101L))
   assert_eq(parse_int64_loose("+42"), Some(42L))
-  // 幅值 2^63 无法在 Int64 累加器中表达，按越界拒绝（含 -2^63 端点）
-  assert_eq(parse_int64_loose("-9223372036854775808"), None)
+  // 幅值 2^63：只有**负号分支的末位**这一格合法（等于 Int64 下界本身）；
+  // 正号与无符号写法仍然越界（第十九轮 RC-19-3 修正了旧断言）。
+  assert_eq(
+    parse_int64_loose("-9223372036854775808"),
+    Some(-9223372036854775808L),
+  )
   assert_eq(
     parse_int64_loose("9223372036854775807"),
     Some(9223372036854775807L),

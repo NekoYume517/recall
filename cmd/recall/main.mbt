@@ -267,11 +267,23 @@ fn parse_int_loose(s : String) -> Int32? {
 
 ///|
 /// 解析 64 位整数。与 `parse_int_loose` 同一套「探测式」规则，
-/// 但结果允许落在 Int64 全域（±(2^63-1)）——`--seed` 用它解析，
+/// 但结果允许落在 Int64 **全域** `[-2^63, 2^63-1]`——`--seed` 用它解析，
 /// 否则 `--seed 3000000000` 会被 Int32 解析误报非法。
-/// 累加用 Int64 承载，溢出预检 `acc > (max - dg) / 10`（等收完再判
-/// 会被回绕吞掉错误）；幅值 2^63（即字面 -9223372036854775808）
-/// 无法在 Int64 累加器中表达，按越界拒绝——种子取到端点没有实际意义。
+///
+/// **为什么不能直接用 Int64 累加幅值**（第十九轮 RC-19-3）：幅值 2^63 在
+/// Int64 上界之外，`-9223372036854775808` 因此被当成越界拒绝。修前实测
+///
+///     9223372036854775807   -> Some（上界可达）
+///     -9223372036854775807  -> Some
+///     -9223372036854775808  -> None（下界不可达，注释却写「全域」）
+///
+/// 更糟的是**溢出判据本身不严**：`(limit - dg) / 10` 这类先减后除的写法在
+/// 19 位数上会被舍入放过，`-9223372036854775999` 能静默通过。现在改成
+/// 「末位之前的守卫 + 末位单独判」：
+///
+///   1. `acc > 922337203685477580` 直接 None（再乘 10 必溢出）；
+///   2. `acc == 922337203685477580` 时末位只允许 0..7（正负同界 2^63-1），
+///      只有负号分支在最后一位额外允许 8——那一格的值就是 Int64 下界本身。
 fn parse_int64_loose(s : String) -> Int64? {
   let t = s.trim_space().to_owned()
   if t.length() == 0 {
@@ -288,23 +300,38 @@ fn parse_int64_loose(s : String) -> Int64? {
   if i >= t.length() {
     return None
   }
-  let limit : Int64 = 9223372036854775807L
+  // 末位之前的上界：再乘 10 接一位数字仍不越界
+  let pre_limit : Int64 = 922337203685477580L
   let mut acc : Int64 = 0L
   while i < t.length() {
     let dg = digit_of(t[i])
     if dg < 0 {
       return None
     }
-    // 溢出预检：acc*10+dg > limit ⟺ acc > (limit-dg)/10（整数除法）
-    if acc > (limit - dg.to_int64()) / 10L {
+    if acc > pre_limit {
       return None
     }
-    acc = acc * 10L + dg.to_int64()
+    // 恰好等于 pre_limit 时，末位只允许 0..7（正负同界 2^63-1）；
+    // 负号分支在最后一位允许 8（幅值 2^63 只对 Int64 下界合法）。
+    // 为避免 `acc * 10 + 8` 在 Int64 上回绕成负值，这一格只标记不累加。
+    let dg64 = dg.to_int64()
+    if acc == pre_limit {
+      let last_digit_ok = if neg && i == t.length() - 1 {
+        dg64 <= 8L
+      } else {
+        dg64 <= 7L
+      }
+      if !last_digit_ok {
+        return None
+      }
+      if dg64 == 8L {
+        return Some(-9223372036854775808L)
+      }
+    }
+    acc = acc * 10L + dg64
     i = i + 1
   }
   if neg {
-    // -2^63 是唯一合法的负下界；acc <= 2^63-1 时取反安全，
-    // 唯一例外 2^63-1 取反得 -(2^63-1)，仍合法，故无需额外检查。
     Some(-acc)
   } else {
     Some(acc)
