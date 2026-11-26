@@ -2274,6 +2274,21 @@ fn usage_error(msg : String) -> Unit {
 }
 
 ///|
+/// 解析阶段**不属于某个子命令**的用法错误（全局参数、位置参数、未知子命令）。
+///
+/// 与 `usage_error` 的唯一区别是不附用法正文——这里报的错往往已经在正文里
+/// 找不到对应项（`help --bogus`），把整篇用法再打一遍只会把真正的错误埋掉。
+///
+/// 两个出口都只走 `diag`：第十九轮 RC-19-1，`main` 在进入子命令之前有四处
+/// 用法错误落在 stdout（`recall --bogus` / `recall zzzz` / `recall replay --log`
+/// / `recall replay -- = 1`），与 `cmd_*` 里统一的 stderr 口径分裂：脚本
+/// `recall stats --log x --json > out.json` 一旦拼错参数，out.json 就被用法
+/// 正文写脏，退出码 2 又确实非零，读者只能靠肉眼判断这份文件是数据还是诊断。
+fn parse_usage_error(msg : String) -> Unit {
+  diag("用法错误: " + msg)
+}
+
+///|
 fn main {
   let argv = @env.args()
   // argv[0] 是程序自身，跳过
@@ -2295,6 +2310,34 @@ fn main {
     j = j + 1
   }
   let args = parse_args(tail)
+  // 全局层（不属于任何子命令）的第一道闸：`--help` / `-h` / `help` 直接出用法，
+  // 任何多余的 token 都算用法错误。
+  //
+  // 在此之前这些分支排在「位置参数 / 未知参数 / 未知子命令」三条检查**之后**，
+  // 于是同一类错法得到两种结果：`recall help extra` 报用法错误 exit 2，
+  // 而 `recall help --bogus 1` 打用法正文 exit 0——用户明确给了一条本工具
+  // 不认识的参数，却被当成"只是想看帮助"（第十九轮 RC-19-1 同族）。
+  if sub == "--help" || sub == "-h" || sub == "help" {
+    if args.positionals.length() > 0 {
+      parse_usage_error(
+        "help 不接受位置参数，多余的 " + args.positionals.join(", "),
+      )
+      @sys.exit(2)
+    }
+    let extra : Array[String] = []
+    for key, _ in args.params {
+      extra.push("--" + key)
+    }
+    for key, _ in args.flags {
+      extra.push("--" + key)
+    }
+    if extra.length() > 0 {
+      parse_usage_error("help 不接受参数，多余的 " + extra.join(", "))
+      @sys.exit(2)
+    }
+    emit(usage_text())
+    return
+  }
   // **未知参数键报错，不静默忽略**（N-5，2026-11-04 审计）。
   //
   // 旧实现把任意 `--xxx` 收进 params/flags，谁也不校验，于是
@@ -2368,18 +2411,6 @@ fn main {
     "advice" => cmd_advice(args)
     "stats" => cmd_stats(args)
     "curve" => cmd_curve(args)
-    "help" => {
-      emit(usage_text())
-      0
-    }
-    "--help" => {
-      emit(usage_text())
-      0
-    }
-    "-h" => {
-      emit(usage_text())
-      0
-    }
     _ => {
       usage_error("未知子命令 " + sub)
       2
