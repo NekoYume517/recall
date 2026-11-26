@@ -425,6 +425,11 @@ pub(all) struct ReplayResult {
   total_lapses : Int
   /// 实际间隔 vs 理想间隔的偏差
   interval_error_days : Double
+  /// **有同刻事件的卡片数**（同一 card 内至少两条 `reviewed_at` 相等）。
+  /// 同刻事件的先后由文件行序决定，换序可能改变摘要——CLI 会把它同时发到
+  /// stderr（人读诊断）与 `--json` 的 `same_timestamp_groups`（机读字段，
+  /// 为 0 时不写该键）。见 §17「重放确定性的边界」。
+  same_timestamp_groups : Int
 }
 
 /// 用指定调度器重放整份日志
@@ -1028,5 +1033,32 @@ CLI 侧合法），而 `advice --days 0` 必须拒绝——`days` 出现在它�
   排序都是编造。本轮只把边界写成可执行断言（`src/replay_tie_order_boundary_test.mbt`，
   用 `i1 != i2` 钉住当前行为）并记录在此；哪天改成「按内容全序」，那条断言会红，
   提醒同步本节与 `src/replay.mbt` 的注释。
+
+  **用户可见面**（2026-11-29 追加，Lead 裁决）：只写进本文档不够——`replay --json`
+  的使用者读的是 stdout 与 stderr，不是 API.md。所以同刻事件现在同时发到三处：
+
+  | 出口 | 内容 |
+  |---|---|
+  | stderr | 每张卡一条诊断：`警告: 卡片 <id> 有 <N> 条同刻事件——其先后按文件行序决定，换序可能改变摘要（--json 的 same_timestamp_groups 会标出这类卡片）`，按 card_id 升序 |
+  | `--json` | 追加 `"same_timestamp_groups":N`（N = 有同刻组的**卡片数**；为 0 时**不写这个键**，保持原 JSON 形状） |
+  | 人读表格 / `--anki` | 不变（stdout 数据段一个字节都不动） |
+
+  判据：`ReplayResult.same_timestamp_groups`（日志属性，与调度器无关，三个调度器
+  给出同一个数）。实测（`k` 卡第二条与第三条同为 `t0+86400`）：
+
+  ```
+  $ recall replay --log tied.jsonl --scheduler fsrs --json
+  {"scheduler":"fsrs",…,"late_review_ratio":0.0000,"same_timestamp_groups":1,"final_intervals":{"k":6.00}}
+  stderr: 警告: 卡片 k 有 2 条同刻事件——…
+
+  $ recall replay --log untied.jsonl --scheduler fsrs --json      # 无同刻
+  {"scheduler":"fsrs",…,"late_review_ratio":0.0000,"final_intervals":{"k":2.00}}
+  stderr: (空)
+  ```
+
+  无同刻事件的输出与第十九轮**逐字节相同**（回归用例
+  `cmd/recall/same_ts_warning_emit_wbtest.mbt` 与库层
+  `src/replay_same_timestamp_warning_test.mbt` 共同锁定）。
+
 - JSONL 往返
 - 模拟：new_per_day=0 时 backlog 单调不增

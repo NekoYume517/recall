@@ -37,6 +37,17 @@ pub(all) struct ReplayResult {
   /// 逾期复习占比 = 「实际间隔 > 上次计划间隔」的样本数 / 有间隔样本数。
   /// 无样本时为 0。落在 [0,1]。
   late_review_ratio : Double
+  /// **有同刻事件的卡片数**（同一 card 内至少两条 `reviewed_at` 相等）。
+  ///
+  /// 为什么要有这个字段（第二十轮 RC-20-3 追加）：同刻事件的先后**由文件行序
+  /// 决定**——缺 `elapsed_days` 的事件按「上一条」回推间隔，`by_card` 的稳定排序
+  /// 又保留输入顺序，于是同一批数据换个行序会得出不同终态（实测 2.0 vs 6.0）。
+  /// 这条边界此前只写在 API.md 里，而 `--json` 的使用者读的是 stdout/stderr。
+  ///
+  /// 口径：按 `by_card` 分好组、组内按 `reviewed_at` 稳定排序后，数「相邻两条
+  /// 时间戳相等」的卡片数（每张卡最多计 1，哪怕有 3 条同刻）。它是**日志属性**，
+  /// 与调度器无关（三个调度器必须给出同一个数）。
+  same_timestamp_groups : Int32
 }
 
 ///|
@@ -66,6 +77,9 @@ pub fn[T : Scheduler] replay_with(log : ReviewLog, s : T) -> ReplayResult {
   // 错误因此混在同一个非负数字里。这个字段保留方向：逾期为正、提前为负。
   let mut signed_mean = 0.0
   let mut late_count = 0
+  // 同一 card 内有 ≥2 条相同时刻事件 → 计一张「同刻卡」（第二十轮 RC-20-3）。
+  // 计在卡片层而不是事件层：告警要说的是「这张卡的摘要可能随行序变」。
+  let mut same_ts_cards = 0
   for cid in card_ids {
     let events = match grouped.get(cid) {
       Some(v) => v
@@ -74,6 +88,17 @@ pub fn[T : Scheduler] replay_with(log : ReviewLog, s : T) -> ReplayResult {
     // 新卡的初始化时刻取该卡第一次复习的时刻：
     // 这样第一次复习的 elapsed 恰为 0，符合 FSRS 的"首次走初始公式"。
     let first_at = if events.length() > 0 { events[0].reviewed_at } else { 0L }
+    // 同刻检测：events 已按 `reviewed_at` 稳定排序，相邻两条相等即成一组。
+    let mut tied = false
+    for i = 1; i < events.length(); i = i + 1 {
+      if events[i].reviewed_at == events[i - 1].reviewed_at {
+        tied = true
+        break
+      }
+    }
+    if tied {
+      same_ts_cards = same_ts_cards + 1
+    }
     let mut state = s.init(cid, first_at)
     let mut prev_reviewed = first_at
     let mut has_prev = false
@@ -166,6 +191,7 @@ pub fn[T : Scheduler] replay_with(log : ReviewLog, s : T) -> ReplayResult {
     } else {
       late_count.to_double() / error_count.to_double()
     },
+    same_timestamp_groups: same_ts_cards,
   }
 }
 

@@ -1360,6 +1360,76 @@ fn load_log(path : String) -> @lib.ReviewLog? {
 // ---------------------------------------------------------------------------
 
 ///|
+/// **同刻事件**告警（第二十轮 RC-20-3 追加，Lead 裁决）。
+///
+/// 同一 card 出现 ≥2 条 `reviewed_at` 相等的事件时，它们的重放先后**由文件行序
+/// 决定**（缺 `elapsed_days` 的按下一条回推的间隔会因此不同），换个行序可能得出
+/// 不同摘要。这条边界此前只写在 `API.md` 的确定性条款里，而 `replay --json` 的
+/// 使用者不会去读 API.md —— 他看的是 stdout 与 stderr。
+///
+/// 所以这里把三件事一次给到用户可见面：
+///   1. stderr 诊断（每张卡一条，按 card_id 升序）；
+///   2. `--json` 里的机读字段 `same_timestamp_groups`（有同刻才写，无则不写键）；
+///   3. 人读表格**不变**（stdout 数据段一个字节都不动）。
+///
+/// 判据「同刻」= 同一 card 内相邻两条（稳定排序后）时间戳相等，与 `by_card`
+/// 的分组一致，也就是重放时真正互相影响的那一组。
+fn rc20_json_tail(groups : Int32) -> String {
+  if groups <= 0 {
+    ""
+  } else {
+    ",\"same_timestamp_groups\":" + groups.to_string()
+  }
+}
+
+///|
+fn rc20_same_ts_warning(card_id : String, ties : Int32) -> String {
+  "警告: 卡片 " +
+  card_id +
+  " 有 " +
+  ties.to_string() +
+  " 条同刻事件——其先后按文件行序决定，换序可能改变摘要（--json 的 same_timestamp_groups 会标出这类卡片）"
+}
+
+///|
+/// 按 card_id 升序列出每张「有同刻事件」的卡片及其同刻组内的最大并列条数。
+/// 纯函数，供 `cmd_replay` 与回归用例共用。
+fn rc20_same_ts_messages(log : @lib.ReviewLog) -> Array[String] {
+  let grouped = log.by_card()
+  let ids : Array[String] = []
+  for cid in grouped.keys() {
+    ids.push(cid)
+  }
+  ids.sort_by(fn(a, b) { a.lexical_compare(b) })
+  let out : Array[String] = []
+  for cid in ids {
+    let events = match grouped.get(cid) {
+      Some(v) => v
+      None => []
+    }
+    // 统计「并列条数」的最大值：同一时刻出现 n 条就报 n。
+    let mut i = 0
+    let mut worst = 0
+    while i < events.length() {
+      let mut j = i + 1
+      while j < events.length() &&
+            events[j].reviewed_at == events[i].reviewed_at {
+        j = j + 1
+      }
+      let run = j - i
+      if run > worst {
+        worst = run
+      }
+      i = j
+    }
+    if worst >= 2 {
+      out.push(rc20_same_ts_warning(cid, worst))
+    }
+  }
+  out
+}
+
+///|
 fn cmd_replay(args : Args) -> Int32 {
   let path = args.get("log", "")
   if path.length() == 0 {
@@ -1384,6 +1454,10 @@ fn cmd_replay(args : Args) -> Int32 {
   let conflict = replay_conflict_hint(args.flag("anki"), args.flag("json"))
   if conflict.length() > 0 {
     diag(conflict)
+  }
+  // 同刻事件告警：只走 stderr，数据出口（表格 / JSON / TSV）一个字节都不动。
+  for msg in rc20_same_ts_messages(log) {
+    diag(msg)
   }
   if args.flag("anki") {
     // Anki 文本导入格式（TSV）：File > Import 直接可用
@@ -1423,6 +1497,8 @@ fn cmd_replay(args : Args) -> Int32 {
     sb.write_string(fmt_json_number(res.signed_interval_error_days, 4))
     sb.write_string(",\"late_review_ratio\":")
     sb.write_string(fmt_json_number(res.late_review_ratio, 4))
+    // 有同刻事件才写这个键（无则保持第十九轮的 JSON 形状，老消费者不受影响）。
+    sb.write_string(rc20_json_tail(res.same_timestamp_groups))
     sb.write_string(",\"final_intervals\":{")
     let mut first = true
     for cid in ids {

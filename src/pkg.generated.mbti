@@ -305,6 +305,7 @@ pub(all) struct ReplayResult {
   interval_error_days : Double
   signed_interval_error_days : Double
   late_review_ratio : Double
+  same_timestamp_groups : Int32
 }
 
 #derive(@debug.Debug)
