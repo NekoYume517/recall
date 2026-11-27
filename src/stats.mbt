@@ -189,6 +189,22 @@ pub fn retention_curve(
   let safe_width = width
   let totals = Array::make(n_buckets, 0)
   let passes = Array::make(n_buckets, 0)
+  // **零间隔样本单独成桶**（第二十二轮 RC-22-1，2026-11-30）。
+  //
+  // 同刻重复复习的零间隔是合法样本（`review_interval` 回 `Some(0.0)`，
+  // API.md §6 明写「有效」）。但归桶的边界搜索下界是 `bi > 0`，于是
+  // `iv == 0` 永远停在桶 0，而桶 0 的标签是 `[0, width)`——那个区间里
+  // 没有任何位置对应 `iv == 0`，于是：
+  //
+  //   * 零间隔样本落进了一个不包含它的区间标签；
+  //   * 桶 0 的保持率只由零间隔样本决定，却顶着 `[0, width)` 的名头，
+  //     真正落在 `(0, width)` 里的样本被排除在外——读数恰好相反。
+  //
+  // 所以零间隔不进任何等宽桶，单独记在 `[0, 0]` 里（与「全部样本为零 ⇒
+  // 一个 `[0,0]` 桶」既有约定同形）。`zero_samples` 与 `zero_passes`
+  // 就是那一桶的分子分母。
+  let mut zero_samples = 0
+  let mut zero_passes = 0
   for (iv, grade) in samples {
     // 归桶：用**与标签同源**的乘法边界比较（RC-8，2026-10-27）。
     //
@@ -213,6 +229,13 @@ pub fn retention_curve(
     // 比 100 桶多花约 0.7 s）。除法只当**起点**，不参与判定——RC-8 的
     // 桶沿反例（`iv = width*3` 却算出 2.999…）仍由下面两个乘法校正循环
     // 兜住，最终落桶与标签逐位同源。
+    if iv <= 0.0 {
+      zero_samples = zero_samples + 1
+      if is_recalled(grade) {
+        zero_passes = zero_passes + 1
+      }
+      continue
+    }
     let ratio = iv / safe_width
     let mut bi = if ratio >= n_buckets.to_double() {
       n_buckets - 1
@@ -234,11 +257,19 @@ pub fn retention_curve(
   }
   // --- 3. 组装非空桶 ---
   let out : Array[(Double, Double, Double)] = []
+  // 零间隔桶排在最前：它是下界 0 的那一档，且与相邻桶不相交（`[0, 0]`
+  // 与 `[0, width)` 只在点 0 相接，而点 0 已被这一档取走）。
+  if zero_samples > 0 {
+    out.push((0.0, 0.0, zero_passes.to_double() / zero_samples.to_double()))
+  }
   let mut i = 0
   while i < n_buckets {
     if totals[i] > 0 {
       // 上下界仍用与归桶相同的 `width * k` 乘出来：
       // 相邻桶严格首尾相接，且与归桶比较逐位同源。
+      // 桶 0 下界为 0 而零间隔样本已单独成桶，因此桶 0 实际只装
+      // `(0, width)` 的开区间样本——下界仍是 0（相邻桶必须首尾相接），
+      // 但零间隔样本不再算在这一行的分子分母里（RC-22-1）。
       let lower = safe_width * i.to_double()
       let upper = safe_width * (i + 1).to_double()
       // 末桶上界直接取 max_elapsed：`width * n_buckets` 的舍入可能**低于**

@@ -770,13 +770,24 @@ fn usage_text() -> String {
 // ---------------------------------------------------------------------------
 
 ///|
-/// 曲线桶标签。常规桶是左闭右开 `[lo, hi)`；但全零间隔样本
-/// （retention_curve 的 max_elapsed==0 分支）只有一桶 (0, 0)，
-/// `[0.0, 0.0)` 是数学上的空区间——读者会以为曲线丢了数据。
-/// 此时打闭区间 `[0.0, 0.0]` 并注明语义。
-fn zero_interval_label(row : (Double, Double, Double)) -> String {
+/// 曲线桶标签。常规桶是左闭右开 `[lo, hi)`；零间隔样本桶是单个
+/// `(0, 0)`——`[0.0, 0.0)` 是数学上的空区间，读者会以为曲线丢了数据，
+/// 所以打闭区间 `[0.0, 0.0]` 并注明语义。
+///
+/// **`only_zero` 决定注语口径**（第二十二轮 RC-22-2）：RC-22-1 之后
+/// `(0, 0)` 不再只出现在「全部样本都是零间隔」的场景——混入正间隔样本时
+/// 它照样是单独一档。此时说「全部为零间隔」就是在说谎（曲线明明还画着
+/// `[15, 20]`），必须改成只描述这一档。
+fn zero_interval_label(
+  row : (Double, Double, Double),
+  only_zero : Bool,
+) -> String {
   if row.0 == 0.0 && row.1 == 0.0 {
-    return "[0.0, 0.0]（全部为零间隔）"
+    return if only_zero {
+      "[0.0, 0.0]（全部为零间隔）"
+    } else {
+      "[0.0, 0.0]（零间隔样本）"
+    }
   }
   "[" + fmt_float(row.0, 1) + ", " + fmt_float(row.1, 1) + ")"
 }
@@ -2458,10 +2469,13 @@ fn cmd_curve(args : Args) -> Int32 {
     4
   }
   let labels : Array[String] = []
+  // 「全部样本都是零间隔」⇔ 曲线只有 (0,0) 这一行（max_elapsed==0 分支，
+  // 或全部样本恰好为零间隔）。混入任何正间隔样本，curve 就会多出别的行。
+  let only_zero = curve.length() == 1 && curve[0].1 == 0.0
   for i, row in curve {
     // 全零间隔的单桶 (0,0) 打成 "[0.0, 0.0)" 会是空区间记号
     if row.0 == 0.0 && row.1 == 0.0 {
-      labels.push(zero_interval_label(row))
+      labels.push(zero_interval_label(row, only_zero))
     } else {
       // RB-A3（2026-11-10 审计）：**末桶是闭区间**——归桶时 elapsed 恰好
       // 等于最大间隔的样本落在最后一桶（count_curve 用 <= 上界），标签
