@@ -1466,7 +1466,14 @@ fn simulate_scan_error(days : Int32, new_per_day : Int32) -> String {
   if units <= limit {
     return ""
   }
-  let msg = "用法错误: simulate 的扫描量（--new-per-day × --days² ÷ 2，模拟器每天两趟全表扫描）必须 <= \{limit}，得到 \{new_per_day} × \{days}² ÷ 2 = \{units}（--days \{days}，--new-per-day \{new_per_day}）"
+  // 文案必须与判据**同一算式**（第二十二轮 RC-22-3）。
+  //
+  // 判据是 `n·d·(d-1)/2`——模拟器第 0 天没有任何到期卡，所以扫描量是
+  // 前缀和 `0 + n + 2n + … + (d-1)n`。旧文案把它写成 `n·d² ÷ 2`，在
+  // 5000/20 上恰好对上（差值 n·d/2 被整除吞掉），在 8000/12 上差 48000，
+  // 于是「照提示核对」永远算不出印出来的数。一处写法、两套语义，读者
+  // 只能得出「这道守卫在瞎判」的结论。
+  let msg = "用法错误: simulate 的扫描量（--new-per-day × (--days − 1) × --days ÷ 2，第 0 天没有到期卡，逐日扫描量从 0 起累加）必须 <= \{limit}，得到 \{new_per_day} × (\{days} − 1) × \{days} ÷ 2 = \{units}（--days \{days}，--new-per-day \{new_per_day}）"
   let bound = suggested_days_upper_bound(new_per_day)
   if bound < 1L {
     msg +
