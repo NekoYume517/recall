@@ -184,24 +184,66 @@ test "rc21-4: 缺键与重复键不 panic" {
 }
 
 ///|
-/// **本用例不依赖「200 层合法」**（第三版 CI 修复时把这条假设显式写进代码，
-/// 原来只写在报告里）。
+/// **超深嵌套的鲁棒性**：本仓库承诺的是「要么整条收下、要么整行拒收」，
+/// 不是「在某个深度拒绝」。
 ///
-/// 判据来自 `rc21_check_fixture`：退出码 ∈ {0,1,2}，且**非 0 时 stdout 必须为空**。
-/// 它对这个 fixture 只有两种可能，两种都被接受：
+/// ## 为什么不能断言某个深度必被拒（第二十一轮，四条 CI 红换来的）
 ///
-///   - 若本工具链的 `D > 200`：200 层合法 → exit 0，事件照收；
-///   - 若本工具链的 `D <= 200`：200 层越界 → exit 1 且 stdout 空。
+/// `@json.parse` 的嵌套上限是**实现细节**：
 ///
-/// 也就是说 `D` 无论落在 200 的哪一侧，判据都成立。**不要**在这里加
-/// 「必须 exit 0」这类断言——`@json.parse` 的嵌套上限随工具链版本变化
-/// （本地 0.1.20261102 是 1024，CI 的 latest 更小），把某个具体深度当成
-/// 「必然合法」会在 CI 上变成 CI-only 红点。
+///   - 本地 `0.1.20261102`：约 1024 层开始拒；
+///   - CI 的 `latest`：**探测到 8192 层仍全部可解析，根本没有上限**。
 ///
-/// 「合法 / 越界」这条**边界**本身由库层用例钉住：
-/// `src/json_parse_depth_limit_test.mbt` 直接 `@json.parse` 自探 `D`，
-/// 断言「`D` 失败、`D−1` 成功、`D+1` 也失败（没有部分成功）」——与 `D` 的数值无关。
-test "rc21-4: 超深嵌套不 panic（不爆栈）" {
+/// 所以「越界时整行判非法」这条**在无上限的工具链上不成立**——那里永远不越界。
+/// 给一个「不一定存在的现象」写契约，就是这轮反复 CI 红的根因。那条契约已经整条
+/// 删除（连同自探探针 `src/json_parse_depth_limit_test.mbt`）。
+///
+/// ## 现在锁的是什么
+///
+/// 只锁**与上限无关**的性质（两种工具链形态下都成立）：
+///
+///   - **要么全收**：exit 0 且事件被收下（`1 个事件`）；
+///   - **要么全拒**：exit 1 且 **stdout 为空**（不是半截输出）。
+///
+/// 绝不接受的两个形态（真正的缺陷）：
+///   - `exit 0` 但**漏了事件**（静默丢弃）；
+///   - `exit 1` 但 **stdout 有半截输出**（部分成功 / 脏数据流）。
+fn rc21_check_deep_nesting(label : String, body : String) -> Unit raise {
+  let path = rc21_write_tmp(label, body)
+  let (code, out) = rc21_run_stats(path)
+  // 只允许 0 或 1；2 是用法错误，说明参数被前一道关卡吃掉了
+  assert_true(code == 0 || code == 1)
+  if code == 0 {
+    // 全收：事件必须在
+    assert_true(out.contains("1 个事件"))
+  } else {
+    // 全拒：数据流必须是空的（不许半截输出）
+    inspect(out, content="")
+  }
+  rc21_cleanup(path)
+}
+
+///|
+test "rc21-4: 超深嵌套（5000 层）——要么全收，要么整行拒收" {
+  let mut nest = ""
+  for _ in 0..<5000 {
+    nest = nest + "["
+  }
+  nest = nest + "1"
+  for _ in 0..<5000 {
+    nest = nest + "]"
+  }
+  rc21_check_deep_nesting(
+    "deep5000",
+    "{\"card_id\":\"c\",\"reviewed_at\":1700000000,\"due_at\":1700000000," +
+    "\"grade\":3,\"elapsed_days\":1,\"x\":" +
+    nest +
+    "}\n",
+  )
+}
+
+///|
+test "rc21-4: 中等嵌套（200 层）——同样要么全收，要么整行拒收" {
   let mut nest = ""
   for _ in 0..<200 {
     nest = nest + "["
@@ -210,9 +252,10 @@ test "rc21-4: 超深嵌套不 panic（不爆栈）" {
   for _ in 0..<200 {
     nest = nest + "]"
   }
-  rc21_check_fixture(
-    "deep",
-    "{\"card_id\":\"c\",\"reviewed_at\":1,\"due_at\":1,\"grade\":3,\"elapsed_days\":1,\"x\":" +
+  rc21_check_deep_nesting(
+    "deep200",
+    "{\"card_id\":\"c\",\"reviewed_at\":1700000000,\"due_at\":1700000000," +
+    "\"grade\":3,\"elapsed_days\":1,\"x\":" +
     nest +
     "}\n",
   )
