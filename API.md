@@ -511,6 +511,37 @@ pub(all) struct Comparison {
 pub fn compare(log : ReviewLog, a : Scheduler, b : Scheduler) -> Comparison
 ```
 
+### 4.1 计划值（`scheduled`）的口径与它的已知盲区（第二十二轮 RC-22-4）
+
+三个偏差指标（`interval_error_days` / `signed_interval_error_days` /
+`late_review_ratio`）都取同一批样本，**计划值来自日志**：
+
+```
+scheduled = (due_at − 上一条事件的 reviewed_at) / 86400   首条事件无前驱，
+                                                           沿用调度器初始 interval_days
+```
+
+RC-19-2 定的就是这条（此前实现取调度器自己算出的理想间隔，`due_at` 一个字节
+都不参与）。三条**已签字**的边界，测试在
+`src/replay_negative_plan_clamp_documented_test.mbt`：
+
+1. **计划值晚于上次复习** ⇒ 读数对它敏感，方向可读：计划比实际晚 4 天
+   ⇒ `signed = −4`（提前 4 天）。这是 RC-19-2 的守卫。
+2. **计划值早于上次复习**（`due_at < 上一条 reviewed_at`）⇒ `scheduled` 按 0
+   处理。该样本的偏差于是变成 `actual − 0 = actual`，即被记成**整段逾期**，
+   而不是「提前 N 天」。实测：`elapsed_days = 4`、`due_at = 上次复习 + 1 天`
+   （计划值 −3 天）→ `signed = +3`、`late_ratio = 1.0`，而用户实际行为是
+   **提前 3 天**。**方向与幅度都错**，这是本指标目前最大的已知盲区。
+3. **计划值正好等于上次复习**（计划值 0）⇒ `scheduled = 0`，该样本
+   **整个不计入**（`scheduled > 0` 才收样本），读数保持 0。
+
+第 2、3 条是**行为**，不是 bug 报告：日志里 `due_at` 早于上次复习是否合法、
+以及它该记「提前 N 天」还是「当天到期」，属于产品判断，本轮不改语义。
+把 `due_at` 早于上次复习 4 天与正好等于上次复习，在 CLI 上得到**逐字节相同**
+的输出——这一点也写进了断言，免得下一轮把它误判成 RC-19-2 复发。
+`footnote`：要区分这两者，唯一办法是消费方自己拿原始日志算
+`days_between(prev.reviewed_at, ev.due_at)`；重放结果里没有这个量。
+
 ## 5. 模拟器 `src/simulate.mbt`
 
 回答"如果我每天学 N 张新卡，三个月后积压多少"。
