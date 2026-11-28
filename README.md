@@ -54,7 +54,7 @@ FSRS 相对 SM-2 的差异在本仓库可以复现的部分见 `compare` 命令�
 
 ## 快速开始
 
-**作为库依赖**（已发布到 [mooncakes.io](https://mooncakes.io/docs/NekoYume517/recall)）：
+**作为库依赖**（已发布到 [mooncakes.io](https://mooncakes.io/docs/NekoYume517/recall)，当前版本 `0.1.1`）：
 
 ```bash
 moon add NekoYume517/recall
