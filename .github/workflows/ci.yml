@@ -8,12 +8,15 @@ on:
 
 env:
   # The CDN only publishes `latest`; dated versions 403, so a literal version
-  # pin cannot be downloaded. What *can* be pinned is the syntax level this
-  # source targets: 0.1.20261102 introduced `#derive(...)` and removed
-  # `Double::to_float` / `UInt::reinterpret_as_float`. The installer below takes
-  # `latest`, then hard-fails if that turns out to be *older* than the level the
-  # code is written against. That converts silent drift into a clear error.
-  MOONBIT_MIN_VERSION: "0.1.20261102"
+  # pin cannot be downloaded. What *can* be pinned is the level this source
+  # targets: `moon 0.1.20261126` / `moonc v1.0.0-rc1` (2026-11-30, toolchain 1.0
+  # audit). The installer below takes `latest`, then hard-fails if that turns out
+  # to be *older* than the level the code is written against. That converts silent
+  # drift into a clear error.
+  MOONBIT_MIN_VERSION: "0.1.20261124"
+  # The compiler reports its own version separately from the build system, and a
+  # 1.0 compiler is what the audit of 2026-11-30 measured all five repos on.
+  MOONC_MIN_VERSION: "v1.0.0-rc1"
 
 jobs:
   test:
@@ -28,12 +31,23 @@ jobs:
 
       - name: Verify toolchain is at least ${{ env.MOONBIT_MIN_VERSION }}
         run: |
-          moon version
+          moon version --all
           got=$(moon version | head -n1 | awk '{print $2}')
-          echo "installed: $got  minimum: $MOONBIT_MIN_VERSION"
+          echo "moon: installed $got  minimum $MOONBIT_MIN_VERSION"
           newest=$(printf '%s\n%s\n' "$MOONBIT_MIN_VERSION" "$got" | sort -V | tail -n1)
           if [ "$newest" != "$got" ]; then
-            echo "::error::toolchain $got is older than the syntax level this repo targets ($MOONBIT_MIN_VERSION)"
+            echo "::error::build system $got is older than the level this repo targets ($MOONBIT_MIN_VERSION)"
+            exit 1
+          fi
+          # `moonc` is the compiler; the dated `moon` number does not imply which
+          # one it is. Both 0.x and 1.x rc spellings start with `v`, so a plain
+          # string sort puts anything pre-1.0 below `v1.0.0-rc1` -- which is the
+          # answer we want (a 0.x compiler is below the level this source targets).
+          gotc=$(moonc -v | awk '{print $1}')
+          echo "moonc: installed $gotc  minimum $MOONC_MIN_VERSION"
+          newestc=$(printf '%s\n%s\n' "$MOONC_MIN_VERSION" "$gotc" | sort -V | tail -n1)
+          if [ "$newestc" != "$gotc" ]; then
+            echo "::error::compiler $gotc is older than the level this repo targets ($MOONC_MIN_VERSION)"
             exit 1
           fi
 
@@ -56,3 +70,14 @@ jobs:
 
       - name: Build wasm
         run: moon build --target wasm
+
+      # The js backend is a second, genuinely different layout of the same code
+      # (one number type, no f32, no linear memory). Two of the five repos can
+      # only be fully exercised there, and the 2026-11-30 toolchain-1.0 audit
+      # found one backend-dependent result that was invisible on wasm — so the
+      # backend is exercised on every push from now on.
+      - name: Run tests (js backend)
+        run: moon test --release --target js
+
+      - name: Build js
+        run: moon build --target js

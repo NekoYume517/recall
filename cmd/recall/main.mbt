@@ -2846,11 +2846,28 @@ fn parse_usage_error(msg : String) -> Unit {
 }
 
 ///|
+/// `@env.args()` 前面有几个元素不属于本程序。
+///
+/// `@env.args()` 是**整个进程**的命令行。js 后端把解释器也算进去：`node` 是
+/// `argv[0]`、编译产物的路径是 `argv[1]`，于是 `recall simulate ...` 到这里变成
+/// `[node, recall.js, simulate, ...]`，从 1 开始跳过就多跳了一个 —— 实测
+/// （`moonc v1.0.0-rc1`）同一个 `help` 在 wasm/wasm-gc 上是 2 个元素、在 js 上是 3 个。
+/// 0.1.20261117 上也是同样的形状，所以这是 js 构建的性质，不是 1.0 引入的。
+///
+/// 两条 `#cfg` 声明：`#cfg` 只能挂在声明上，挂在语句上不通过解析。
+#cfg(not(target="js"))
+let argv_prefix : Int32 = 1
+
+///|
+#cfg(target="js")
+let argv_prefix : Int32 = 2
+
+///|
 fn main {
   let argv = @env.args()
-  // argv[0] 是程序自身，跳过
+  // argv[0] 是程序自身，跳过（js 上还要跳过 node，见 `argv_prefix`）
   let rest : Array[String] = []
-  let mut i = 1
+  let mut i = argv_prefix
   while i < argv.length() {
     rest.push(argv[i])
     i = i + 1

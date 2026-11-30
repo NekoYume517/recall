@@ -2,7 +2,7 @@
 
 **间隔重复调度引擎：SM-2 / FSRS / Leitner 的统一实现，加日志重放与积压预测。**
 
-[![MoonBit](https://img.shields.io/badge/MoonBit-0.1.20261102-blueviolet)](https://www.moonbitlang.com/)
+[![MoonBit](https://img.shields.io/badge/MoonBit-1.0.0--rc1*-blueviolet)](https://www.moonbitlang.com/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
 ---
@@ -80,7 +80,18 @@ moon run cmd/recall -- simulate --scheduler fsrs --days 90 --new-per-day 20 --re
 
 # 看自己的保留率曲线
 moon run cmd/recall -- curve --log examples/reviews.jsonl --buckets 10
+
+# 同一个 CLI 也能跑在 js 后端上（CI 会跑；用于确认调度逻辑不依赖 wasm）
+moon run --target js cmd/recall -- compare --log examples/reviews.jsonl --a sm2 --b fsrs
 ```
+
+**工具链：MoonBit 1.0（`moon 0.1.20261126` / `moonc v1.0.0-rc1`）**，`moon.mod` 里
+`preferred_target = "wasm"`。CI 取 CDN 的 `latest`，然后硬校验 `moon` 不低于
+`0.1.20261124`、`moonc` 不低于 `v1.0.0-rc1`：CDN 只发布 `latest`（带日期的版本 403），
+能钉住的是**语法级别**而不是某个字节版本，所以约束写成「不得更旧」。
+2026-11-30 的工具链 1.0 迁移实测记录见 `../HANDOVER.md` 第三十二节；本仓在
+`moonc v1.0.0-rc1` 上 738 个用例在 `wasm`、`wasm-gc`、`js` 三个后端全过，
+**没有需要改语法的断裂**，只改了一处 js 的 argv 起点（`node` 也占一个位置）。
 
 **量级守卫**：`simulate` 在启动时拒绝「卡数 / 扫描量」超界的参数（exit 2），
 运行中还有一道**工作预算**——`--days` 很大而 `--review-limit` 小到消化不了积压时
@@ -156,6 +167,7 @@ cmd/recall/
 ## License
 
 Apache-2.0，见 [LICENSE](LICENSE)。
+
 
 
 
